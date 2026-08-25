@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #trap 'read -p "Line $LINENO: $BASH_COMMAND (Press Enter to step)"' DEBUG
 set -euo pipefail
 SPEED=1
@@ -53,19 +53,26 @@ done
 
 shift $((OPTIND - 1))
 
+SAVED_STTY=$(stty -g </dev/tty 2>/dev/null)
+
 cleanup() {
-	tput cnorm
-	tput rmcup
-	stty echo
+	trap - EXIT INT TERM
+	printf "\e[0m\e[?25h\e[?1049l" > /dev/tty
+	if [ -n "$SAVED_STTY" ]; then
+	    stty "$SAVED_STTY" </dev/tty >/dev/tty 2>/dev/null
+	else
+	    stty sane icanon echo </dev/tty >/dev/tty 2>/dev/null
+	fi
+
 	read -n 10 -p "Player Name (Max 10 characters) : " player_name
-	echo "Player : ${player_name:-Player}, Speed : $SPEED , Score : $SCORE" | tee -a ~/scores.txt
+	printf "Player : ${player_name:-Player}, Speed : $SPEED , Score : $SCORE\n" | tee -a ~/scores.txt
+	exit 0
 }
 
 trap cleanup EXIT INT TERM
 
-tput smcup
-tput civis
-stty -echo
+printf "\e[?1049h\e[?25l" >/dev/tty
+stty -echo -icanon min 1 time 0 </dev/tty >/dev/tty 2>/dev/null
 
 init_box() {
     local row=1
@@ -74,10 +81,6 @@ init_box() {
     local width=$(( WIDTH * width_gap ))
     local height=$HEIGHT
     local title=" SNAKE' "
-
-    local top_left="╠" top_right="╣"
-    local bot_left="╚" bot_right="╝"
-    local horz="═" vert="║"
 
     # Title
     tput cup $row $col
@@ -132,7 +135,7 @@ draw_snake() {
 
     # Snake Tiles
     local s_body=$(printf '\u2592%.0s' $(seq 1 $GAP))
-    local s_head=$(printf '\u2593%.0s' $(seq 1 $GAP))
+    local s_head=$(printf '\u2588%.0s' $(seq 1 $GAP))
     local s_food=$(printf ' %.0s' $(seq 1 $GAP))
 
     #Food generator
@@ -385,4 +388,3 @@ engine
 
 sleep 5
 exit 0
-
