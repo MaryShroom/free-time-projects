@@ -53,26 +53,32 @@ done
 
 shift $((OPTIND - 1))
 
-SAVED_STTY=$(stty -g </dev/tty 2>/dev/null)
+TTY_DEV=$(tty 2>/dev/null || echo "/dev/tty")
+SAVED_STTY=$(stty -g <"$TTY_DEV" 2>/dev/null)
 
 cleanup() {
 	trap - EXIT INT TERM
 	printf "\e[0m\e[?25h\e[?1049l" > /dev/tty
 	if [ -n "$SAVED_STTY" ]; then
-	    stty "$SAVED_STTY" </dev/tty >/dev/tty 2>/dev/null
+	    stty "$SAVED_STTY" <"$TTY_DEV" 2>/dev/null
 	else
-	    stty sane icanon echo </dev/tty >/dev/tty 2>/dev/null
+	    stty sane icanon echo <"$TTY_DEV" 2>/dev/null
 	fi
 
 	read -n 10 -p "Player Name (Max 10 characters) : " player_name
 	printf "Player : ${player_name:-Player}, Speed : $SPEED , Score : $SCORE\n" | tee -a ~/scores.txt
-	exit 0
 }
 
 trap cleanup EXIT INT TERM
 
-printf "\e[?1049h\e[?25l" >/dev/tty
-stty -echo -icanon min 1 time 0 </dev/tty >/dev/tty 2>/dev/null
+printf "\e[?1049h\e[?25l"
+stty -echo -icanon min 1 time 0 <"$TTY_DEV" 2>/dev/null
+
+move_cursor() {
+    local row=$1
+    local col=$2
+    printf "\e[%d;%dH" $((row + 1)) $((col + 1))
+}
 
 init_box() {
     local row=1
@@ -83,47 +89,47 @@ init_box() {
     local title=" SNAKE' "
 
     # Title
-    tput cup $row $col
+    move_cursor $row $col
     printf "\u2554"
     for ((i=1; i<=width; i++)); do printf "\u2550"; done
     printf "\u2557"
-    tput cup $row $(( ( width / 2 ) - (${#title} / 2) + col + 1 ))
+    move_cursor $row $(( ( width / 2 ) - (${#title} / 2) + col + 1 ))
     printf "$title"
 
     # Box
     # Top
-    tput cup $(( row + 1 ))  $col
+    move_cursor $(( row + 1 ))  $col
     printf "\u2560"
     for ((i=1; i<=width; i++)); do printf "\u2550"; done
     printf "\u2563"
     # Sides
     for ((r=1; r<=height; r++)); do
-	tput cup $((row + 1 + r)) $col
+	move_cursor $((row + 1 + r)) $col
 	printf "\u2551"
-	tput cup $((row + 1 + r)) $((col + width + 1))
+	move_cursor $((row + 1 + r)) $((col + width + 1))
 	printf "\u2551"
     done
     # Bottom
-    tput cup $((row + height + 2)) $col
+    move_cursor $((row + height + 2)) $col
     printf "\u2560"
     for ((i=1; i<=width; i++)); do printf "\u2550"; done
     printf "\u2563"
 
     # Score, Speed
-    tput cup $((row + height + 3)) $col
+    move_cursor $((row + height + 3)) $col
     printf "\u2560 Sco"
-    tput cup $((row + height + 3)) $((col + width - 3))
+    move_cursor $((row + height + 3)) $((col + width - 3))
     printf "Spe \u2563"
-    tput cup $((row + height + 4)) $col
+    move_cursor $((row + height + 4)) $col
     printf "\u255A"
-    tput cup $((row + height + 4)) $((col + width + 1))
+    move_cursor $((row + height + 4)) $((col + width + 1))
     printf "\u255D"
 
     # Score Number
-    tput cup $((row + height + 4)) $((col + 2))
+    move_cursor $((row + height + 4)) $((col + 2))
     printf "0"
     # Speed Number
-    tput cup $((row + height + 4)) $((col + width - 2))
+    move_cursor $((row + height + 4)) $((col + width - 2))
     printf "%02d" "$SPEED"
 }
 
@@ -144,7 +150,7 @@ draw_snake() {
     local food="${foods[$rand]}"
 
     # Draw
-    tput cup "$row" "$col"
+    move_cursor "$row" "$col"
     case "$type" in
 	sbody)		printf "$s_body" ;;
 	shead)		printf "$s_head" ;;
@@ -220,18 +226,18 @@ engine() {
     food[col]=$(echo "$food_pos" | cut -d':' -f2)
 
     # Countdown
-    tput cup 4 $(( ( ( width*GAP ) / 2 ) + 2 ))
+    move_cursor 4 $(( ( ( width*GAP ) / 2 ) + 2 ))
     echo -n "03"
     sleep 1
-    tput cup 4 $(( ( ( width*GAP ) / 2 ) + 2 ))
+    move_cursor 4 $(( ( ( width*GAP ) / 2 ) + 2 ))
     echo -n "02"
     sleep 1
-    tput cup 4 $(( ( ( width*GAP ) / 2 ) + 2 ))
+    move_cursor 4 $(( ( ( width*GAP ) / 2 ) + 2 ))
     echo -n "01"
     sleep 1
-    tput cup 4 $(( ( ( width*GAP ) / 2 ) + 2 ))
+    move_cursor 4 $(( ( ( width*GAP ) / 2 ) + 2 ))
     echo -n "  "
-    tput cup $(( height + 6 )) 4
+    move_cursor $(( height + 6 )) 4
     echo -n "(Press q to quit)"
 
     #First draw
@@ -248,7 +254,7 @@ engine() {
 	    if (( speed < 50 )); then
 		(( ++speed ))
 		timeout=$(( 500000 - (speed - 1) * 10000 ))
-		tput cup $((2 + height + 3)) $(( ( GAP * width ) ))
+		move_cursor $((2 + height + 3)) $(( ( GAP * width ) ))
     		printf "%02d" "$speed"
 	    fi
 	fi
@@ -282,7 +288,7 @@ engine() {
             $'\x1b[C')	[[ "$new_move" != "left" ]] && new_move="right" ;;
             $'\x1b[D')	[[ "$new_move" != "right" ]] && new_move="left" ;;
 	    q|Q)
-		tput cup $(( (height / 2) + 2 )) $(( ( ( width*GAP ) / 2 ) - 2 ))
+		move_cursor $(( (height / 2) + 2 )) $(( ( ( width*GAP ) / 2 ) - 2 ))
                 printf "\e[31mGAME  OVER\e[0m"
 		break
 		;; #Quit
@@ -361,17 +367,17 @@ engine() {
         draw_snake "shead" "${s_body_row[-1]}" "${s_body_col[-1]}"
 
 	#Update Score
-	tput cup $((2 + height + 3)) 4
+	move_cursor $((2 + height + 3)) 4
         echo -n "$score"
 
 	#Game Over
 	if dupt s_body_row s_body_col; then
-	    tput cup $(( (height / 2) + 2 )) $(( ( ( width*GAP ) / 2 ) - 2 ))
+	    move_cursor $(( (height / 2) + 2 )) $(( ( ( width*GAP ) / 2 ) - 2 ))
             printf "\e[31mGAME  OVER\e[0m"
             break
         fi
 	if (( max_food == 0 )); then
-	    tput cup $(( (height / 2) + 2 )) $(( ( ( width*GAP ) / 2 ) - 2 ))
+	    move_cursor $(( (height / 2) + 2 )) $(( ( ( width*GAP ) / 2 ) - 2 ))
             printf "\e[32mGAME  OVER\e[0m"
             break
         fi
@@ -387,4 +393,3 @@ init_box
 engine
 
 sleep 5
-exit 0
