@@ -9,28 +9,33 @@ MSG="Done."
 
 PAINT_ROW=10
 PAINT_COL=10
-NAME="Untitled.bin"
+NAME="Untitled"
 PAINT_BG=2
 EDIT=1
 FILE_PATH=""
+FILE_TYPE="bin"
 
 while getopts "w:l:t:b:f:h" opt; do
     case "$opt" in
         w)
+			# Width/Column
 			PAINT_COL="$OPTARG"
 			HAS_W=1
 			;;
         l)
+			# Length/Height/Row
 			PAINT_ROW="$OPTARG"
 			HAS_H=1
 			;;
-        t) NAME="$OPTARG" ;;
+        t) NAME="${OPTARG}" ;; # Name
         b)
+			# Set canvas background, white default
 			if [[ "$OPTARG" -ge 0 && "$OPTARG" -le 8 ]]; then
 				PAINT_BG="$OPTARG"
 			fi
 			;;
 		f)
+			# Check is file
 			if [[ ! -f "$OPTARG" || ! -r "$OPTARG" ]]; then
 				printf 'Error: State file "%s" is unreadable or missing.\n' "$OPTARG" >&2
 				exit 1
@@ -38,8 +43,12 @@ while getopts "w:l:t:b:f:h" opt; do
 
 			exec 3< "$OPTARG"
 
-			# Read Metadata Header
-			IFS= read -r -d '' magic <&3 || { exec 3<&-; exit 1; }
+			# Read magic
+			IFS= read -r -d '' magic <&3 || {
+				printf 'Error: Failed to read magic header from file.\n' >&2
+				exec 3<&-
+				exit 1;
+			}
 
 			# Check metadata
 			if [[ "$magic" != "TUI_STATE_V1" ]]; then
@@ -52,12 +61,16 @@ while getopts "w:l:t:b:f:h" opt; do
 			EDIT=0
 			;;
 		h)
-			printf "# Usage: $0 [-w width -l length -t title -b background -h help]\n"
+			printf "# Usage: $0 [-w width -l length -t title -b background -f file -h help]\n"
 			printf "# Default backgound color (White)\n#   0 - Transparent\n#   1 - Black\n#   2 - White\n#   3 - Red\n#   4 - Green\n#   5 - Yellow\n#   6 - Blue\n#   7 - Magenta\n#   8 - Cyan\n"
 			printf "# Key Input:\n#   Foreground - Left Click on color palette\n#   Background - Right Click on color palette\n#   Shade - Left Click on color shade\n"
+			printf "#   Ctrl + A - Save as .pam\n#   Ctrl + S - Save as .bin (Recommended)\n#   Ctrl + D - Save as .png (Half-width size 1:2)\n#   Ctrl + F - Save as .png (Full-width size 1:1)\n"
 			exit 0
 			;;
-        ?) echo "Usage: $0 [-w width -h height -t title -b background]"; exit 1 ;;
+        ?)
+			printf "# Usage: $0 [-w width -l length -t title -b background -f file -h help]\n"
+			exit 1
+			;;
     esac
 done
 
@@ -99,21 +112,36 @@ CURSOR_COL=0
 RESIZE=0
 DRAG=0
 IS_DRAW=0
+IS_SAVE=0
 MEM_USAGE_STR="0 KB"
+
+PERL_SUPPORT=0
+
+declare -A GNOME_BG_MAP=(
+    [0]="0 0 0"
+    [30]="46 52 54"     [40]="46 52 54"     # Black
+    [31]="204 0 0"      [41]="204 0 0"      # Red
+    [32]="78 154 6"     [42]="78 154 6"     # Green
+    [33]="196 160 0"    [43]="196 160 0"    # Yellow
+    [34]="52 101 164"   [44]="52 101 164"   # Blue
+    [35]="117 80 123"   [45]="117 80 123"   # Magenta
+    [36]="6 152 154"    [46]="6 152 154"    # Cyan
+    [37]="211 215 207"  [47]="211 215 207"  # White
+)
 
 check_mouse_support() {
 	if [[ -z "${TERM:-}" || "$TERM" == "dumb" ]]; then
-		echo "Error: Dumb or uninitialized terminal environment ($TERM)." >&2
+		printf "Error: Dumb or uninitialized terminal environment ($TERM).\n" >&2
 		return 1
 	fi
 
 	if [[ "$TERM" == "linux" ]] || [[ "$TTY_DEV" =~ ^/dev/tty[0-9]+$ ]]; then
-		echo "Error: Unsupported Linux Virtual Console detected ($TTY_DEV)." >&2
+		printf "Error: Unsupported Linux Virtual Console detected ($TTY_DEV).\n" >&2
 		return 1
 	fi
 
 	if [[ ! -c "$TTY_DEV" ]]; then
-		echo "Error: $TTY_DEV is not a valid character device." >&2
+		printf "Error: $TTY_DEV is not a valid character device.\n" >&2
 		return 1
 	fi
 
@@ -137,23 +165,250 @@ handle_signal() {
 	exit 130
 }
 
+ansi_to_rgba_bytes() {
+    local str="$1"
+    local raw="" char=" "
+    local a=0 r=0 g=0 b=0
+
+    if [[ "$str" =~ \e\[([0-9;]+)m ]]; then
+        raw="${BASH_REMATCH[1]}"
+    fi
+
+    char="${str#*m}"
+    char="${char:0:${#char}-5}"
+
+    IFS=';' read -ra codes <<< "$raw"
+
+    local bg="${GNOME_BG_MAP[${codes[0]}]}"
+    local fg="0 0 0"
+    if [[ -v codes[1] ]]; then
+        local fg="${GNOME_BG_MAP[${codes[1]}]}"
+    fi
+
+    # Set opacity
+    local bg_a=100 fg_a=0
+    if [[ "$char" == "\u2588" ]]; then
+        bg_a=0
+        fg_a=100
+        a=255
+    elif [[ "$char" == "\u2593" ]]; then
+        bg_a=25
+        fg_a=75
+        a=191
+    elif [[ "$char" == "\u2592" ]]; then
+        bg_a=50
+        fg_a=50
+        a=127
+    elif [[ "$char" == "\u2591" ]]; then
+        bg_a=75
+        fg_a=25
+        a=63
+    elif [[ "$char" == " " ]]; then
+        bg_a=100
+        fg_a=0
+        a=0
+    fi
+
+    # Background full transparent
+    if [[ "${codes[0]}" -eq 0 ]]; then
+        bg_a=0
+    fi
+
+    # Alpha max if background
+    if [[ "${codes[0]}" -ne 0 ]]; then
+        a=255
+    fi
+    # Alpha min if foreground is 0
+    if [[ -v codes[1] && "${codes[1]}" -eq 0 ]]; then
+        a=0
+    fi
+
+    local bg_r=0 bg_g=0 bg_b=0
+    local fg_r=0 fg_g=0 fg_b=0
+    read -r bg_r bg_g bg_b <<< "$bg"
+    read -r fg_r fg_g fg_b <<< "$fg"
+    r=$(( (fg_r * fg_a + bg_r * bg_a) / 100 ))
+    g=$(( (fg_g * fg_a + bg_g * bg_a) / 100 ))
+    b=$(( (fg_b * fg_a + bg_b * bg_a) / 100 ))
+
+    # Format to binary sequence (R G B A)
+    printf '\\x%02x\\x%02x\\x%02x\\x%02x' "$r" "$g" "$b" "$a"
+}
+
+pam_to_png() {
+	local scaling=$1
+
+	# Scale height
+	# Ratio width to height 1:2
+	if [[ "$scaling" -eq 1 ]]; then
+		perl -e '
+			use Compress::Zlib;
+
+			my $scale_x = 10;
+			my $scale_y = 20;
+
+			#PAM Header
+			my ($w, $h, $depth);
+			while (<STDIN>) {
+				last if /^ENDHDR/;
+				$w = $1 if /^WIDTH\s+(\d+)/;
+				$h = $1 if /^HEIGHT\s+(\d+)/;
+				$depth = $1 if /^DEPTH\s+(\d+)/;
+			}
+
+			#Read pixel bytes
+			read(STDIN, my $raw, $w * $h * $depth);
+
+			my $scanlines = "";
+
+			my $out_w = $w * $scale_x;
+			my $out_h = $h * $scale_y;
+
+			for my $y (0 .. $h - 1) {
+				my $scaled_row = "";
+
+				#Scale horz
+				for my $x (0 .. $w - 1) {
+					my $offset = ($y * $w + $x) * $depth;
+					my $pixel = substr($raw, $offset, $depth);
+					$scaled_row .= ($pixel x $scale_x);
+				}
+
+				#Scale vert
+				for (1 .. $scale_y) {
+					$scanlines .= "\x00" . $scaled_row;
+				}
+			}
+
+			my $idat = compress($scanlines);
+			sub crc { return pack("N", Compress::Zlib::crc32($_[0])); }
+
+			print "\x89PNG\r\n\x1a\n";
+			my $ihdr = pack("NNCCCCC", $out_w, $out_h, 8, ($depth == 4 ? 6 : 2), 0, 0, 0);
+			print pack("N", length($ihdr)) . "IHDR" . $ihdr . crc("IHDR" . $ihdr);
+			print pack("N", length($idat)) . "IDAT" . $idat . crc("IDAT" . $idat);
+			print pack("N", 0) . "IEND" . crc("IEND");
+		'
+	# Ratio width to height 1:1
+	elif [[ "$scaling" -eq 2 ]]; then
+		perl -e '
+			use Compress::Zlib;
+
+			my $scale_x = 20;
+			my $scale_y = 20;
+
+			#PAM Header
+			my ($w, $h, $depth);
+			while (<STDIN>) {
+				last if /^ENDHDR/;
+				$w = $1 if /^WIDTH\s+(\d+)/;
+				$h = $1 if /^HEIGHT\s+(\d+)/;
+				$depth = $1 if /^DEPTH\s+(\d+)/;
+			}
+
+			#Read pixel bytes
+			read(STDIN, my $raw, $w * $h * $depth);
+
+			my $scanlines = "";
+
+			my $out_w = $w * $scale_x;
+			my $out_h = $h * $scale_y;
+
+			for my $y (0 .. $h - 1) {
+				my $scaled_row = "";
+
+				#Scale horz
+				for my $x (0 .. $w - 1) {
+					my $offset = ($y * $w + $x) * $depth;
+					my $pixel = substr($raw, $offset, $depth);
+					$scaled_row .= ($pixel x $scale_x);
+				}
+
+				#Scale vert
+				for (1 .. $scale_y) {
+					$scanlines .= "\x00" . $scaled_row;
+				}
+			}
+
+			my $idat = compress($scanlines);
+			sub crc { return pack("N", Compress::Zlib::crc32($_[0])); }
+
+			print "\x89PNG\r\n\x1a\n";
+			my $ihdr = pack("NNCCCCC", $out_w, $out_h, 8, ($depth == 4 ? 6 : 2), 0, 0, 0);
+			print pack("N", length($ihdr)) . "IHDR" . $ihdr . crc("IHDR" . $ihdr);
+			print pack("N", length($idat)) . "IDAT" . $idat . crc("IDAT" . $idat);
+			print pack("N", 0) . "IEND" . crc("IEND");
+		'
+	fi
+}
+
+pam_generator() {
+	# PAM Header
+	printf "P7\nWIDTH %d\nHEIGHT %d\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n" "$PAINT_COL" "$PAINT_ROW"
+
+	# Pixel Data Loop
+	for ((r = 1; r <= PAINT_ROW; r++)); do
+		for ((c = 1; c <= PAINT_COL; c++)); do
+			printf "%b" "$(ansi_to_rgba_bytes "${PAINT_ITEMS["$r:$c"]}")"
+		done
+	done
+}
+
+saving_info() {
+	local row=1
+	local col=0
+
+	if [[ "$PERL_SUPPORT" -eq 1 ]]; then
+		col=$((TERM_COLS / 2 - 6))
+		if [[ "$IS_SAVE" -eq 1 ]]; then
+			printf '\e[%d;%dH\e[43;30m[  Saving  ]\e[0m' "$row" "$col" >"$TTY_DEV"
+		else
+			printf '\e[%d;%dH\e[42;30m[  Saved!  ]\e[0m' "$row" "$col" >"$TTY_DEV"
+			sleep 1
+			top_title
+			# Clear mouse buffers
+			while read -t 0.001 -n 10000 _; do :; done
+		fi
+	else
+		col=$((TERM_COLS / 2 - 8))
+		printf '\e[%d;%dH\e[41;37m[ Unsupported! ]\e[0m' "$row" "$col" >"$TTY_DEV"
+		sleep 1
+		top_title
+		# Clear mouse buffers
+		while read -t 0.001 -n 10000 _; do :; done
+	fi
+}
+
 save_file() {
+	IS_SAVE=1
+	saving_info
+
 	local path=$1
 	local type=$2
 
 	case "$type" in
-		bytes)
+		bytes) # Save as .bin
 			{
 				printf 'TUI_STATE_V1\0%s\0%s\0' "$PAINT_ROW" "$PAINT_COL"
 
 				for key in "${!PAINT_ITEMS[@]}"; do
 					printf '%s\0%s\0' "$key" "${PAINT_ITEMS[$key]}"
 				done
-			} > "$path"
+			} > "${path}.bin"
 			;;
-		png)
+		pam) # Save as .pam
+			pam_generator > "${path}.pam"
+			;;
+		png) # Save as .png
+			pam_generator | pam_to_png 2 > "${path}.png"
+			;;
+		png1) # Save as .png half-width
+			pam_generator | pam_to_png 1 > "${path}.png"
 			;;
 	esac
+
+	IS_SAVE=0
+	saving_info
 }
 
 load_file() {
@@ -172,7 +427,7 @@ load_file() {
 	IFS= read -r -d '' row <&3
 	IFS= read -r -d '' col <&3
 
-	# Check metadata
+	# Check Metadata
 	if [[ "$magic" != "TUI_STATE_V1" ]]; then
 		printf 'Error: Invalid file format (Magic: "%s").\n' "$magic" >&2
 		exec 3<&-
@@ -498,12 +753,19 @@ use_mouse() {
 
 init_terminal() {
 	if ! check_mouse_support; then
-		echo "Error: Unsupported terminal environment ($TTY_DEV)." >&2
+		printf "Error: Unsupported terminal environment ($TTY_DEV).\n" >&2
 		exit 1
 	fi
 
 	if [[ -n "$FILE_PATH" ]]; then
 		load_file $FILE_PATH
+		temp_name="${FILE_PATH##*/}"
+		NAME="${temp_name%%.*}"
+		FILE_TYPE="${temp_name##*.}"
+	fi
+
+	if command -v perl >/dev/null 2>&1; then
+		PERL_SUPPORT=1
 	fi
 
     trap cleanup EXIT
@@ -611,6 +873,9 @@ paint_pixel() {
     if [[ "$col" -le "$PAINT_OUTLINE_LEFT" || "$col" -ge "$PAINT_OUTLINE_RIGHT" ]]; then
 		return
     fi
+
+    EDIT=1
+	top_title
 
     #Set bacground
     case "$PAINT_BG" in
@@ -745,6 +1010,11 @@ click_handler() {
 		return
     fi
 
+    #Wait save finish
+	if [[ "$IS_SAVE" -eq 1 ]]; then
+		return
+	fi
+
     case "$button" in
 		0) #Left Click
 			# Select Color
@@ -804,8 +1074,6 @@ click_handler() {
 					draw_ui
 				fi
 			else
-				EDIT=1
-				top_title
 				DRAG=1
 				paint_pixel "$col" "$row"
 			fi
@@ -971,8 +1239,48 @@ main() {
 					D)	click_handler "k_left" "$CURSOR_COL" "$CURSOR_ROW" "M" ;;  # Left Arrow
 				esac
 			fi
+		# Ctrl + S (Save as bin)
 		elif [[ "$byte" = $'\x13' ]]; then
-			save_file "./$NAME" "bytes"
+			# If no file, make new
+			if [[ -z "$FILE_PATH" ]]; then
+				save_file "./$NAME" "bytes"
+			else
+				temp_path="${FILE_PATH%%.*}"
+				save_file "$temp_path" "bytes"
+			fi
+			EDIT=0
+			top_title
+		# Ctrl + A (Save as PAM)
+		elif [[ "$byte" = $'\x01' ]]; then
+			# If no file, make new
+			if [[ -z "$FILE_PATH" ]]; then
+				save_file "./$NAME" "pam"
+			else
+				temp_path="${FILE_PATH%%.*}"
+				save_file "$temp_path" "pam"
+			fi
+			EDIT=0
+			top_title
+		#Ctrl + D (Save as PNG Half-width size)
+		elif [[ "$byte" = $'\x04' ]]; then
+			# If no file, make new
+			if [[ -z "$FILE_PATH" ]]; then
+				save_file "./$NAME" "png1"
+			else
+				temp_path="${FILE_PATH%%.*}"
+				save_file "$temp_path" "png1"
+			fi
+			EDIT=0
+			top_title
+		#Ctrl + F (Save as PNG Full-width size)
+		elif [[ "$byte" = $'\x06' ]]; then
+			# If no file, make new
+			if [[ -z "$FILE_PATH" ]]; then
+				save_file "./$NAME" "png"
+			else
+				temp_path="${FILE_PATH%%.*}"
+				save_file "$temp_path" "png"
+			fi
 			EDIT=0
 			top_title
 		fi
