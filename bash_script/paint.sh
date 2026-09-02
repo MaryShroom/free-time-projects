@@ -64,7 +64,7 @@ while getopts "w:l:t:b:f:h" opt; do
 			printf "# Usage: $0 [-w width -l length -t title -b background -f file -h help]\n"
 			printf "# Default backgound color (White)\n#   0 - Transparent\n#   1 - Black\n#   2 - White\n#   3 - Red\n#   4 - Green\n#   5 - Yellow\n#   6 - Blue\n#   7 - Magenta\n#   8 - Cyan\n"
 			printf "# Key Input:\n#   Foreground - Left Click on color palette\n#   Background - Right Click on color palette\n#   Shade - Left Click on color shade\n"
-			printf "#   Ctrl + A - Save as .pam\n#   Ctrl + S - Save as .bin (Recommended)\n#   Ctrl + D - Save as .png (Half-width size 1:2)\n#   Ctrl + F - Save as .png (Full-width size 1:1)\n"
+			printf "#   Ctrl + A - Save as .pam\n#   Ctrl + S - Save as .bin (Recommended)\n#   Ctrl + E - Save as .bmp (Half-width size 1:2)\n#   Ctrl + R - Save as .bmp (Full-width size 1:1)\n#   Ctrl + D - Save as .png (Half-width size 1:2) [Perl Required]\n#   Ctrl + F - Save as .png (Full-width size 1:1) [Perl Required]\n"
 			exit 0
 			;;
         ?)
@@ -235,6 +235,131 @@ ansi_to_rgba_bytes() {
     printf '\\x%02x\\x%02x\\x%02x\\x%02x' "$r" "$g" "$b" "$a"
 }
 
+pam_to_bmp() {
+	local scale_x="${1:-1}" # x scale factor (default 1)
+	local scale_y="${2:-1}" # y scale factor (default 1)
+
+	# Parse PAM Header
+	local w h depth line
+	while IFS= read -r line; do
+		line="${line%$'\r'}" # Strip \r if present
+		[[ "$line" =~ ^WIDTH\ ([0-9]+) ]] && w="${BASH_REMATCH[1]}"
+		[[ "$line" =~ ^HEIGHT\ ([0-9]+) ]] && h="${BASH_REMATCH[1]}"
+		[[ "$line" =~ ^DEPTH\ ([0-9]+) ]] && depth="${BASH_REMATCH[1]}"
+		[[ "$line" =~ ^ENDHDR ]] && break
+	done
+
+	# Calculate Scaled Dimensions
+	local out_w=$(( w * scale_x ))
+	local out_h=$(( h * scale_y ))
+
+	local unpadded_row_bytes=$(( out_w * 4 ))
+	local padding_bytes=$(( (4 - (unpadded_row_bytes % 4)) % 4 ))
+	local padded_row_bytes=$(( unpadded_row_bytes + padding_bytes ))
+
+	local pixel_offset=122 # 14 (File Header) + 108 (V4 Header)
+	local image_size=$(( padded_row_bytes * out_h ))
+	local file_size=$(( pixel_offset + image_size ))
+
+	# Octal Binary Encoders
+	le32() {
+		local v=$1
+		printf "\\$(printf '%03o\\%03o\\%03o\\%03o' \
+			$(( v & 0xFF )) \
+			$(( (v >> 8) & 0xFF )) \
+			$(( (v >> 16) & 0xFF )) \
+			$(( (v >> 24) & 0xFF )))"
+	}
+
+	le16() {
+		local v=$1
+		printf "\\$(printf '%03o\\%03o' \
+			$(( v & 0xFF )) \
+			$(( (v >> 8) & 0xFF )))"
+	}
+
+	# Construct BITMAPFILEHEADER (14 bytes)
+	printf "BM"
+	le32 "$file_size"
+	le16 0; le16 0
+	le32 "$pixel_offset"
+
+	# Construct BITMAPV4HEADER (108 bytes)
+	le32 108
+	le32 "$out_w"
+	le32 "$out_h"
+	le16 1
+	le16 32
+	le32 3
+	le32 "$image_size"
+	le32 2835; le32 2835
+	le32 0; le32 0
+
+	# RGBA Bitmasks (Little-Endian BGRA 32-bit)
+	printf "\x00\x00\xFF\x00"           # Red Mask   (0x00FF0000)
+	printf "\x00\xFF\x00\x00"           # Green Mask (0x0000FF00)
+	printf "\xFF\x00\x00\x00"           # Blue Mask  (0x000000FF)
+	printf "\x00\x00\x00\xFF"           # Alpha Mask (0xFF000000)
+
+	# (CSType, Endpoints, Gamma Red/Green/Blue)
+	printf '\x00%.0s' {1..52}
+
+	# Read PAM raw binary stream as zero-padded 2-digit hex values
+	local raw_bytes
+	if command -v hexdump >/dev/null 2>&1; then
+		raw_bytes=($(hexdump -v -e '1/1 "%02x "'))
+	else
+		# Fallback for minimal systems using od
+		raw_bytes=($(od -An -v -t x1 | tr -s ' ' | sed 's/^ //' | tr ' ' '\n' | awk '{printf "%02s\n", $0}' | tr ' ' '0'))
+	fi
+
+	# Pre-build row padding string (if needed)
+	local pad_str=""
+	if (( padding_bytes > 0 )); then
+		for (( p = 0; p < padding_bytes; p++ )); do
+			pad_str+="\\x00"
+		done
+	fi
+
+	local y x i j idx r g b a px
+	local row_bytes_out=""
+
+	# Extract Rows Bottom-Up
+	for (( y = h - 1; y >= 0; y-- )); do
+		row_bytes_out=""
+
+		for (( x = 0; x < w; x++ )); do
+			idx=$(( (y * w + x) * depth ))
+
+			# Extract RGBA from array
+			r="${raw_bytes[$idx]}"
+			g="${raw_bytes[$((idx + 1))]}"
+			b="${raw_bytes[$((idx + 2))]}"
+
+			if (( depth == 4 )); then
+				a="${raw_bytes[$((idx + 3))]}"
+			else
+				a="ff" # Full opacity for RGB images
+			fi
+
+			# Form BGRA pixel
+			px="\\x${b}\\x${g}\\x${r}\\x${a}"
+
+			# x Scaling
+			for (( i = 0; i < scale_x; i++ )); do
+				row_bytes_out+="$px"
+			done
+		done
+
+		row_bytes_out+="$pad_str"
+
+		# y Scaling
+		for (( j = 0; j < scale_y; j++ )); do
+			printf "%b" "$row_bytes_out"
+		done
+	done
+}
+
 pam_to_png() {
 	local scaling=$1
 
@@ -358,20 +483,11 @@ saving_info() {
 	local row=1
 	local col=0
 
-	if [[ "$PERL_SUPPORT" -eq 1 ]]; then
-		col=$((TERM_COLS / 2 - 6))
-		if [[ "$IS_SAVE" -eq 1 ]]; then
-			printf '\e[%d;%dH\e[43;30m[  Saving  ]\e[0m' "$row" "$col" >"$TTY_DEV"
-		else
-			printf '\e[%d;%dH\e[42;30m[  Saved!  ]\e[0m' "$row" "$col" >"$TTY_DEV"
-			sleep 1
-			top_title
-			# Clear mouse buffers
-			while read -t 0.001 -n 10000 _; do :; done
-		fi
+	col=$((TERM_COLS / 2 - 6))
+	if [[ "$IS_SAVE" -eq 1 ]]; then
+		printf '\e[%d;%dH\e[43;30m[  Saving  ]\e[0m' "$row" "$col" >"$TTY_DEV"
 	else
-		col=$((TERM_COLS / 2 - 8))
-		printf '\e[%d;%dH\e[41;37m[ Unsupported! ]\e[0m' "$row" "$col" >"$TTY_DEV"
+		printf '\e[%d;%dH\e[42;30m[  Saved!  ]\e[0m' "$row" "$col" >"$TTY_DEV"
 		sleep 1
 		top_title
 		# Clear mouse buffers
@@ -380,35 +496,50 @@ saving_info() {
 }
 
 save_file() {
-	IS_SAVE=1
-	saving_info
+	if [[ "$PERL_SUPPORT" -eq 1 ]]; then
+		IS_SAVE=1
+		saving_info
 
-	local path=$1
-	local type=$2
+		local path=$1
+		local type=$2
 
-	case "$type" in
-		bytes) # Save as .bin
-			{
-				printf 'TUI_STATE_V1\0%s\0%s\0' "$PAINT_ROW" "$PAINT_COL"
+		case "$type" in
+			bytes) # Save as .bin
+				{
+					printf 'TUI_STATE_V1\0%s\0%s\0' "$PAINT_ROW" "$PAINT_COL"
 
-				for key in "${!PAINT_ITEMS[@]}"; do
-					printf '%s\0%s\0' "$key" "${PAINT_ITEMS[$key]}"
-				done
-			} > "${path}.bin"
-			;;
-		pam) # Save as .pam
-			pam_generator > "${path}.pam"
-			;;
-		png) # Save as .png
-			pam_generator | pam_to_png 2 > "${path}.png"
-			;;
-		png1) # Save as .png half-width
-			pam_generator | pam_to_png 1 > "${path}.png"
-			;;
-	esac
+					for key in "${!PAINT_ITEMS[@]}"; do
+						printf '%s\0%s\0' "$key" "${PAINT_ITEMS[$key]}"
+					done
+				} > "${path}.bin"
+				;;
+			pam) # Save as .pam
+				pam_generator > "${path}.pam"
+				;;
+			bmp) # Save as .bmp
+				pam_generator | pam_to_bmp 20 20 > "${path}.bmp"
+				;;
+			bmp1) # Save as .bmp
+				pam_generator | pam_to_bmp 10 20 > "${path}.bmp"
+				;;
+			png) # Save as .png
+				pam_generator | pam_to_png 2 > "${path}.png"
+				;;
+			png1) # Save as .png half-width
+				pam_generator | pam_to_png 1 > "${path}.png"
+				;;
+		esac
 
-	IS_SAVE=0
-	saving_info
+		IS_SAVE=0
+		saving_info
+	else
+		col=$((TERM_COLS / 2 - 8))
+		printf '\e[%d;%dH\e[41;37m[ Unsupported! ]\e[0m' 1 "$col" >"$TTY_DEV"
+		sleep 1
+		top_title
+		# Clear mouse buffers
+		while read -t 0.001 -n 10000 _; do :; done
+	fi
 }
 
 load_file() {
@@ -1168,6 +1299,19 @@ get_mem_usage() {
 	fi
 }
 
+save_parse() {
+	local type="$1"
+	# If no file, make new
+	if [[ -z "$FILE_PATH" ]]; then
+		save_file "./$NAME" "$type"
+	else
+		temp_path="${FILE_PATH%%.*}"
+		save_file "$temp_path" "$type"
+	fi
+	EDIT=0
+	top_title
+}
+
 main() {
     init_terminal
 
@@ -1240,49 +1384,17 @@ main() {
 				esac
 			fi
 		# Ctrl + S (Save as bin)
-		elif [[ "$byte" = $'\x13' ]]; then
-			# If no file, make new
-			if [[ -z "$FILE_PATH" ]]; then
-				save_file "./$NAME" "bytes"
-			else
-				temp_path="${FILE_PATH%%.*}"
-				save_file "$temp_path" "bytes"
-			fi
-			EDIT=0
-			top_title
+		elif [[ "$byte" = $'\x13' ]]; then save_parse "bytes"
 		# Ctrl + A (Save as PAM)
-		elif [[ "$byte" = $'\x01' ]]; then
-			# If no file, make new
-			if [[ -z "$FILE_PATH" ]]; then
-				save_file "./$NAME" "pam"
-			else
-				temp_path="${FILE_PATH%%.*}"
-				save_file "$temp_path" "pam"
-			fi
-			EDIT=0
-			top_title
+		elif [[ "$byte" = $'\x01' ]]; then save_parse "pam"
+		# Ctrl + E (Save as BMP Half-width size)
+		elif [[ "$byte" = $'\x05' ]]; then save_parse "bmp1"
+		# Ctrl + R (Save as BMP Full-width size)
+		elif [[ "$byte" = $'\x12' ]]; then save_parse "bmp"
 		#Ctrl + D (Save as PNG Half-width size)
-		elif [[ "$byte" = $'\x04' ]]; then
-			# If no file, make new
-			if [[ -z "$FILE_PATH" ]]; then
-				save_file "./$NAME" "png1"
-			else
-				temp_path="${FILE_PATH%%.*}"
-				save_file "$temp_path" "png1"
-			fi
-			EDIT=0
-			top_title
+		elif [[ "$byte" = $'\x04' ]]; then save_parse "png1"
 		#Ctrl + F (Save as PNG Full-width size)
-		elif [[ "$byte" = $'\x06' ]]; then
-			# If no file, make new
-			if [[ -z "$FILE_PATH" ]]; then
-				save_file "./$NAME" "png"
-			else
-				temp_path="${FILE_PATH%%.*}"
-				save_file "$temp_path" "png"
-			fi
-			EDIT=0
-			top_title
+		elif [[ "$byte" = $'\x06' ]]; then save_parse "png"
 		fi
     done
 }
