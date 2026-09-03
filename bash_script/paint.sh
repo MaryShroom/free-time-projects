@@ -13,9 +13,9 @@ NAME="Untitled"
 PAINT_BG=2
 EDIT=1
 FILE_PATH=""
-FILE_TYPE="bin" #Remove
+COLOR_PALETTE_TYPE=1
 
-while getopts "w:l:t:b:f:h" opt; do
+while getopts "w:l:t:b:f:c:h" opt; do
     case "$opt" in
         w)
 			# Width/Column
@@ -27,7 +27,7 @@ while getopts "w:l:t:b:f:h" opt; do
 			PAINT_ROW="$OPTARG"
 			HAS_H=1
 			;;
-        t) NAME="${OPTARG}" ;; # Name
+        t) NAME="$OPTARG" ;; # Name
         b)
 			# Set canvas background, white default
 			if [[ "$OPTARG" -ge 0 && "$OPTARG" -le 8 ]]; then
@@ -60,10 +60,27 @@ while getopts "w:l:t:b:f:h" opt; do
 			FILE_PATH="$OPTARG"
 			EDIT=0
 			;;
+		c)
+			if [[ "$OPTARG" -ge 1 && "$OPTARG" -le 9 ]]; then
+				COLOR_PALETTE_TYPE="$OPTARG"
+			fi
+			;;
 		h)
-			printf "# Usage: $0 [-w width -l length -t title -b background -f file -h help]\n"
-			printf "# Default backgound color (White)\n#   0 - Transparent\n#   1 - Black\n#   2 - White\n#   3 - Red\n#   4 - Green\n#   5 - Yellow\n#   6 - Blue\n#   7 - Magenta\n#   8 - Cyan\n"
-			printf "# Key Input:\n#   #  Foreground - Left Click on color palette\n#   \e[41m \e[0m  Background - Right Click on color palette\n#   [] Shade - Left Click on color shade\n"
+			printf "# Usage: $0 [-w width -l length -t title -b background -f file -c color -h help]\n"
+			printf "#   -w  Set Width\n#   -l  Set Length/Height\n#   -t  Set Title\n#   -b  Set Background Color (Refer below)\n#   -f  Open .bin File\n#   -c  Set Color Palette [ONLY For Output, Use Designated TE] (Refer Below)\n#   -h  Show Help\n#\n"
+			printf "# Default backgound color (White)\n#   0 - Transparent\n#   1 - Black\n#   2 - White\n#   3 - Red\n#   4 - Green\n#   5 - Yellow\n#   6 - Blue\n#   7 - Magenta\n#   8 - Cyan\n#\n"
+			printf "# Color Palette [ONLY For Output, Use Designated TE]\n"
+			printf "#   1 - Adwaita Dark (GNOME Terminal) # Default\n"
+			printf "#   2 - Catppuccin Mocha  (Alacritty)\n"
+			printf "#   3 - Breeze              (Konsole)\n"
+			printf "#   4 - Pencil Dark         (WezTerm)\n"
+			printf "#   5 - Tango Dark   (Xfce4 Terminal)\n"
+			printf "#   6 - Kitty Dark            (Kitty)\n"
+			printf "#   7 - Solarized Dark       (iTerm2)\n"
+			printf "#   8 - Nord              (Alacritty)\n"
+			printf "#   9 - Classic VT100         (XTerm)\n"
+			printf "#\n"
+			printf "# Key Input\n#   #  Foreground - Left Click on color palette\n#   \e[41m \e[0m  Background - Right Click on color palette\n#   [] Shade - Left Click on color shade\n"
 			printf "#   Ctrl + A - Save as .pam\n#   Ctrl + S - Save as .bin (Recommended)\n#   Ctrl + E - Save as .bmp (Half-width size 1:2)\n#   Ctrl + R - Save as .bmp (Full-width size 1:1)\n#   Ctrl + D - Save as .png (Half-width size 1:2) [Perl Required]\n#   Ctrl + F - Save as .png (Full-width size 1:1) [Perl Required]\n"
 			exit 0
 			;;
@@ -117,16 +134,104 @@ MEM_USAGE_STR="0 KB"
 
 PERL_SUPPORT=0
 
-declare -A GNOME_BG_MAP=(
-    [0]="0 0 0"
-    [30]="46 52 54"     [40]="46 52 54"     # Black
-    [31]="204 0 0"      [41]="204 0 0"      # Red
-    [32]="78 154 6"     [42]="78 154 6"     # Green
-    [33]="196 160 0"    [43]="196 160 0"    # Yellow
-    [34]="52 101 164"   [44]="52 101 164"   # Blue
-    [35]="117 80 123"   [45]="117 80 123"   # Magenta
-    [36]="6 152 154"    [46]="6 152 154"    # Cyan
-    [37]="211 215 207"  [47]="211 215 207"  # White
+# Color Palette 1
+declare -A GNOME_COLOR_MAP=(
+    [30]="23 20 33"     [40]="23 20 33"     # Black
+    [31]="192 28 40"    [41]="192 28 40"    # Red
+    [32]="38 162 105"   [42]="38 162 105"   # Green
+    [33]="162 115 0"    [43]="162 115 0"    # Yellow
+    [34]="18 72 139"   	[44]="18 72 139"   	# Blue
+    [35]="163 71 186"   [45]="163 71 186"   # Magenta
+    [36]="42 161 152"   [46]="42 161 152"   # Cyan
+    [37]="208 207 204"  [47]="208 207 204"  # White
+)
+# Color Palette 2
+declare -A ALACRITTY_COLOR_MAP=(
+    [30]="69 71 90"		[40]="69 71 90"		# Black
+    [31]="243 139 168" 	[41]="243 139 168"  # Red
+    [32]="166 227 161" 	[42]="166 227 161"  # Green
+    [33]="249 226 175" 	[43]="249 226 175"  # Yellow
+    [34]="137 180 250" 	[44]="137 180 250"  # Blue
+    [35]="245 194 231"	[45]="245 194 231"  # Magenta
+    [36]="148 226 213"	[46]="148 226 213"  # Cyan
+    [37]="186 194 222"	[47]="186 194 222"  # White
+)
+# Color Palette 3
+declare -A KONSOLE_COLOR_MAP=(
+    [30]="35 38 41"		[40]="35 38 41"		# Black
+    [31]="237 21 21" 	[41]="237 21 21"  	# Red
+    [32]="17 209 22" 	[42]="17 209 22"  	# Green
+    [33]="246 116 0" 	[43]="246 116 0" 	# Yellow
+    [34]="29 153 243" 	[44]="29 153 243"   # Blue
+    [35]="155 89 182"	[45]="155 89 182"   # Magenta
+    [36]="26 188 156"	[46]="26 188 156"   # Cyan
+    [37]="252 252 252"	[47]="252 252 252"  # White
+)
+# Color Palette 4
+declare -A WEZTERM_COLOR_MAP=(
+    [30]="0 0 0"		[40]="0 0 0"		# Black
+    [31]="204 0 0" 		[41]="204 0 0"  	# Red
+    [32]="78 154 6" 	[42]="78 154 6"  	# Green
+    [33]="196 160 0" 	[43]="196 160 0" 	# Yellow
+    [34]="52 101 164" 	[44]="52 101 164"  	# Blue
+    [35]="117 80 123"	[45]="117 80 123" 	# Magenta
+    [36]="6 152 154"	[46]="6 152 154"  	# Cyan
+    [37]="211 215 207"	[47]="211 215 207"  # White
+)
+# Color Palette 5
+declare -A XFCE4_COLOR_MAP=(
+    [30]="0 0 0"		[40]="0 0 0"		# Black
+    [31]="170 0 0" 		[41]="170 0 0"  	# Red
+    [32]="0 170 0" 		[42]="0 170 0"  	# Green
+    [33]="170 85 0" 	[43]="170 85 0" 	# Yellow
+    [34]="0 0 170" 		[44]="0 0 170"  	# Blue
+    [35]="170 0 170"	[45]="170 0 170" 	# Magenta
+    [36]="0 170 170"	[46]="0 170 170"  	# Cyan
+    [37]="170 170 170"	[47]="170 170 170"  # White
+)
+# Color Palette 6
+declare -A KITTY_COLOR_MAP=(
+    [30]="0 0 0"		[40]="0 0 0"		# Black
+    [31]="204 4 3" 		[41]="204 4 3"  	# Red
+    [32]="25 203 0" 	[42]="25 203 0"  	# Green
+    [33]="206 203 0" 	[43]="206 203 0" 	# Yellow
+    [34]="13 115 204" 	[44]="13 115 204"  	# Blue
+    [35]="203 30 209"	[45]="203 30 209" 	# Magenta
+    [36]="13 205 205"	[46]="13 205 205"  	# Cyan
+    [37]="221 221 221"	[47]="221 221 221"  # White
+)
+# Color Palette 7
+declare -A ITERM2_COLOR_MAP=(
+    [30]="7 54 66"		[40]="7 54 66"		# Black
+    [31]="220 50 47" 	[41]="220 50 47"  	# Red
+    [32]="133 153 0" 	[42]="133 153 0"  	# Green
+    [33]="181 137 0" 	[43]="181 137 0" 	# Yellow
+    [34]="38 139 210" 	[44]="38 139 210"  	# Blue
+    [35]="211 54 130"	[45]="211 54 130" 	# Magenta
+    [36]="42 161 152"	[46]="42 161 152"  	# Cyan
+    [37]="238 232 213"	[47]="238 232 213"  # White
+)
+# Color Palette 8
+declare -A NORD_COLOR_MAP=(
+    [30]="59 66 82"		[40]="59 66 82"		# Black
+    [31]="191 97 106" 	[41]="191 97 106"	# Red
+    [32]="163 190 140" 	[42]="163 190 140"  # Green
+    [33]="235 203 139" 	[43]="235 203 139" 	# Yellow
+    [34]="129 161 193" 	[44]="129 161 193"  # Blue
+    [35]="180 142 173"	[45]="180 142 173" 	# Magenta
+    [36]="136 192 208"	[46]="136 192 208"  # Cyan
+    [37]="229 233 240"	[47]="229 233 240"  # White
+)
+# Color Palette 9
+declare -A XTERM_COLOR_MAP=(
+    [30]="0 0 0"		[40]="0 0 0"		# Black
+    [31]="205 0 0" 		[41]="205 0 0"  	# Red
+    [32]="0 205 0" 		[42]="0 205 0"  	# Green
+    [33]="205 205 0" 	[43]="205 205 0" 	# Yellow
+    [34]="0 0 205" 		[44]="0 0 205"  	# Blue
+    [35]="205 0 205"	[45]="205 0 205" 	# Magenta
+    [36]="0 205 205"	[46]="0 205 205"  	# Cyan
+    [37]="229 229 229"	[47]="229 229 229"  # White
 )
 
 check_mouse_support() {
@@ -179,10 +284,28 @@ ansi_to_rgba_bytes() {
 
     IFS=';' read -ra codes <<< "$raw"
 
-    local bg="${GNOME_BG_MAP[${codes[0]}]}"
+	# Select color palette
+	case "$COLOR_PALETTE_TYPE" in
+		1)	declare -n palette=GNOME_COLOR_MAP		;;
+		2)	declare -n palette=ALACRITTY_COLOR_MAP	;;
+		3)	declare -n palette=KONSOLE_COLOR_MAP	;;
+		4)	declare -n palette=WEZTERM_COLOR_MAP	;;
+		5)	declare -n palette=XFCE4_COLOR_MAP		;;
+		6)	declare -n palette=KITTY_COLOR_MAP		;;
+		7)	declare -n palette=ITERM2_COLOR_MAP		;;
+		8)	declare -n palette=NORD_COLOR_MAP		;;
+		9)	declare -n palette=XTERM_COLOR_MAP		;;
+		*)	declare -n palette=GNOME_COLOR_MAP		;; # Default
+	esac
+
+	local bg="0 0 0"
+	if [[ "${codes[0]}" -ne 0 ]]; then
+		bg="${palette[${codes[0]}]}"
+	fi
+
     local fg="0 0 0"
-    if [[ -v codes[1] ]]; then
-        local fg="${GNOME_BG_MAP[${codes[1]}]}"
+    if [[ -v codes[1] && "${codes[1]}" -ne 0 ]]; then
+        local fg="${palette[${codes[1]}]}"
     fi
 
     # Set opacity
@@ -503,6 +626,19 @@ save_file() {
 	local path=$1
 	local type=$2
 
+	local color_type="gnome" # Default
+	case "$COLOR_PALETTE_TYPE" in
+		1)	color_type="gnome"		;;
+		2)	color_type="alacritty"	;;
+		3)	color_type="konsole"	;;
+		4)	color_type="wezterm"	;;
+		5)	color_type="xfce4"		;;
+		6)	color_type="kitty"		;;
+		7)	color_type="iterm2"		;;
+		8)	color_type="nord"		;;
+		9)	color_type="xterm"		;;
+	esac
+
 	case "$type" in
 		bytes) # Save as .bin
 			{
@@ -514,17 +650,17 @@ save_file() {
 			} > "${path}.bin"
 			;;
 		pam) # Save as .pam
-			pam_generator > "${path}.pam"
+			pam_generator > "${path}-${color_type}.pam"
 			;;
 		bmp) # Save as .bmp
-			pam_generator | pam_to_bmp 20 20 > "${path}.bmp"
+			pam_generator | pam_to_bmp 20 20 > "${path}-${color_type}-1by1.bmp"
 			;;
-		bmp1) # Save as .bmp
-			pam_generator | pam_to_bmp 10 20 > "${path}.bmp"
+		bmp1) # Save as .bmp half-width
+			pam_generator | pam_to_bmp 10 20 > "${path}-${color_type}-1by2.bmp"
 			;;
 		png) # Save as .png
 			if [[ "$PERL_SUPPORT" -eq 1 ]]; then
-				pam_generator | pam_to_png 2 > "${path}.png"
+				pam_generator | pam_to_png 2 > "${path}-${color_type}-1by1.png"
 			else
 				col=$((TERM_COLS / 2 - 8))
 				printf '\e[%d;%dH\e[41;37m[ Unsupported! ]\e[0m' 1 "$col" >"$TTY_DEV"
@@ -538,7 +674,7 @@ save_file() {
 			;;
 		png1) # Save as .png half-width
 			if [[ "$PERL_SUPPORT" -eq 1 ]]; then
-				pam_generator | pam_to_png 1 > "${path}.png"
+				pam_generator | pam_to_png 1 > "${path}-${color_type}-1by2.png"
 			else
 				col=$((TERM_COLS / 2 - 8))
 				printf '\e[%d;%dH\e[41;37m[ Unsupported! ]\e[0m' 1 "$col" >"$TTY_DEV"
@@ -909,7 +1045,6 @@ init_terminal() {
 		load_file $FILE_PATH
 		temp_name="${FILE_PATH##*/}"
 		NAME="${temp_name%%.*}"
-		FILE_TYPE="${temp_name##*.}"
 	fi
 
 	if command -v perl >/dev/null 2>&1; then
