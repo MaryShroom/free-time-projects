@@ -13,7 +13,7 @@ NAME="Untitled"
 PAINT_BG=2
 EDIT=1
 FILE_PATH=""
-FILE_TYPE="bin"
+FILE_TYPE="bin" #Remove
 
 while getopts "w:l:t:b:f:h" opt; do
     case "$opt" in
@@ -63,7 +63,7 @@ while getopts "w:l:t:b:f:h" opt; do
 		h)
 			printf "# Usage: $0 [-w width -l length -t title -b background -f file -h help]\n"
 			printf "# Default backgound color (White)\n#   0 - Transparent\n#   1 - Black\n#   2 - White\n#   3 - Red\n#   4 - Green\n#   5 - Yellow\n#   6 - Blue\n#   7 - Magenta\n#   8 - Cyan\n"
-			printf "# Key Input:\n#   Foreground - Left Click on color palette\n#   Background - Right Click on color palette\n#   Shade - Left Click on color shade\n"
+			printf "# Key Input:\n#   #  Foreground - Left Click on color palette\n#   \e[41m \e[0m  Background - Right Click on color palette\n#   [] Shade - Left Click on color shade\n"
 			printf "#   Ctrl + A - Save as .pam\n#   Ctrl + S - Save as .bin (Recommended)\n#   Ctrl + E - Save as .bmp (Half-width size 1:2)\n#   Ctrl + R - Save as .bmp (Full-width size 1:1)\n#   Ctrl + D - Save as .png (Half-width size 1:2) [Perl Required]\n#   Ctrl + F - Save as .png (Full-width size 1:1) [Perl Required]\n"
 			exit 0
 			;;
@@ -496,50 +496,65 @@ saving_info() {
 }
 
 save_file() {
-	if [[ "$PERL_SUPPORT" -eq 1 ]]; then
-		IS_SAVE=1
-		saving_info
+	IS_SAVE=1
+	saving_info
+	use_mouse 0
 
-		local path=$1
-		local type=$2
+	local path=$1
+	local type=$2
 
-		case "$type" in
-			bytes) # Save as .bin
-				{
-					printf 'TUI_STATE_V1\0%s\0%s\0' "$PAINT_ROW" "$PAINT_COL"
+	case "$type" in
+		bytes) # Save as .bin
+			{
+				printf 'TUI_STATE_V1\0%s\0%s\0' "$PAINT_ROW" "$PAINT_COL"
 
-					for key in "${!PAINT_ITEMS[@]}"; do
-						printf '%s\0%s\0' "$key" "${PAINT_ITEMS[$key]}"
-					done
-				} > "${path}.bin"
-				;;
-			pam) # Save as .pam
-				pam_generator > "${path}.pam"
-				;;
-			bmp) # Save as .bmp
-				pam_generator | pam_to_bmp 20 20 > "${path}.bmp"
-				;;
-			bmp1) # Save as .bmp
-				pam_generator | pam_to_bmp 10 20 > "${path}.bmp"
-				;;
-			png) # Save as .png
+				for key in "${!PAINT_ITEMS[@]}"; do
+					printf '%s\0%s\0' "$key" "${PAINT_ITEMS[$key]}"
+				done
+			} > "${path}.bin"
+			;;
+		pam) # Save as .pam
+			pam_generator > "${path}.pam"
+			;;
+		bmp) # Save as .bmp
+			pam_generator | pam_to_bmp 20 20 > "${path}.bmp"
+			;;
+		bmp1) # Save as .bmp
+			pam_generator | pam_to_bmp 10 20 > "${path}.bmp"
+			;;
+		png) # Save as .png
+			if [[ "$PERL_SUPPORT" -eq 1 ]]; then
 				pam_generator | pam_to_png 2 > "${path}.png"
-				;;
-			png1) # Save as .png half-width
+			else
+				col=$((TERM_COLS / 2 - 8))
+				printf '\e[%d;%dH\e[41;37m[ Unsupported! ]\e[0m' 1 "$col" >"$TTY_DEV"
+				sleep 1
+				top_title
+				# Clear mouse buffers
+				while read -t 0.001 -n 10000 _; do :; done
+				use_mouse 1
+				return
+			fi
+			;;
+		png1) # Save as .png half-width
+			if [[ "$PERL_SUPPORT" -eq 1 ]]; then
 				pam_generator | pam_to_png 1 > "${path}.png"
-				;;
-		esac
+			else
+				col=$((TERM_COLS / 2 - 8))
+				printf '\e[%d;%dH\e[41;37m[ Unsupported! ]\e[0m' 1 "$col" >"$TTY_DEV"
+				sleep 1
+				top_title
+				# Clear mouse buffers
+				while read -t 0.001 -n 10000 _; do :; done
+				use_mouse 1
+				return
+			fi
+			;;
+	esac
 
-		IS_SAVE=0
-		saving_info
-	else
-		col=$((TERM_COLS / 2 - 8))
-		printf '\e[%d;%dH\e[41;37m[ Unsupported! ]\e[0m' 1 "$col" >"$TTY_DEV"
-		sleep 1
-		top_title
-		# Clear mouse buffers
-		while read -t 0.001 -n 10000 _; do :; done
-	fi
+	IS_SAVE=0
+	saving_info
+	use_mouse 1
 }
 
 load_file() {
@@ -733,6 +748,7 @@ draw_paint() {
 
 draw_ui() {
 	IS_DRAW=1
+	use_mouse 0
 	# Clear Screen
     printf '\e[2J' >"$TTY_DEV"
 
@@ -867,6 +883,7 @@ draw_ui() {
     # Clear mouse buffers
     while read -t 0.001 -n 10000 _; do :; done
     IS_DRAW=0
+    use_mouse 1
 }
 
 handle_resize() {
@@ -1329,13 +1346,11 @@ main() {
 		fi
 		#Resize
 		if [[ "$RESIZE" -eq 1 ]]; then
-			use_mouse 0
 			RESIZE=0
 			update_dimensions
 			draw_ui
 			CURSOR_ROW=0
 			CURSOR_COL=0
-			use_mouse 1
 		fi
 
 		#Read stdin and quit with 'q'
