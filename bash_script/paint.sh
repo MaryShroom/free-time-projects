@@ -14,8 +14,10 @@ PAINT_BG=2
 EDIT=1
 FILE_PATH=""
 COLOR_PALETTE_TYPE=1
+FORCE_RUN=0
+TRUECOLOR=0
 
-while getopts "w:l:t:b:f:c:h" opt; do
+while getopts "w:l:t:b:f:c:xh" opt; do
     case "$opt" in
         w)
 			# Width/Column
@@ -65,11 +67,12 @@ while getopts "w:l:t:b:f:c:h" opt; do
 				COLOR_PALETTE_TYPE="$OPTARG"
 			fi
 			;;
+		x)  FORCE_RUN=1;	;;
 		h)
-			printf "# Usage: $0 [-w width -l length -t title -b background -f file -c color -h help]\n"
-			printf "#   -w  Set Width\n#   -l  Set Length/Height\n#   -t  Set Title\n#   -b  Set Background Color (Refer below)\n#   -f  Open .bin File\n#   -c  Set Color Palette [ONLY For Output, Use Designated TE] (Refer Below)\n#   -h  Show Help\n#\n"
+			printf "# Usage: $0 [-w width -l length -t title -b bg_color -f file -c palette -x force_run -h help]\n"
+			printf "#   -w  Set Width\n#   -l  Set Length/Height\n#   -t  Set Title\n#   -b  Set Background Color (Refer below)\n#   -f  Open .bin File\n#   -c  Set Color Palette (Refer Below)\n#       [If terminal support truecolor. Does not affect on save]\n#   -x  Force run [NOT RECOMMENDED]\n#   -h  Show Help\n#\n"
 			printf "# Default backgound color (White)\n#   0 - Transparent\n#   1 - Black\n#   2 - White\n#   3 - Red\n#   4 - Green\n#   5 - Yellow\n#   6 - Blue\n#   7 - Magenta\n#   8 - Cyan\n#\n"
-			printf "# Color Palette [ONLY For Output, Use Designated TE]\n"
+			printf "# Color Palette [If terminal support truecolor. Does not affect on save]\n"
 			printf "#   1 - Adwaita Dark (GNOME Terminal) "
 			printf "\e[48;2;23;20;33m  \e[48;2;192;28;40m  \e[48;2;38;162;105m  \e[48;2;162;115;0m  "
 			printf "\e[48;2;18;72;139m  \e[48;2;163;71;186m  \e[48;2;42;161;152m  \e[48;2;208;207;204m  \e[0m"
@@ -100,11 +103,12 @@ while getopts "w:l:t:b:f:c:h" opt; do
 			printf "\e[48;2;0;0;205m  \e[48;2;205;0;205m  \e[48;2;0;205;205m  \e[48;2;229;229;229m  \e[0m\n"
 			printf "#\n"
 			printf "# Key Input\n#   #  Foreground - Left Click on color palette\n#   \e[41m \e[0m  Background - Right Click on color palette\n#   [] Shade - Left Click on color shade\n"
+			printf "#   Q - Quit program\n#   P - Choose color palette [number]. Press again to cancel\n"
 			printf "#   Ctrl + A - Save as .pam\n#   Ctrl + S - Save as .bin (Recommended)\n#   Ctrl + E - Save as .bmp (Half-width size 1:2)\n#   Ctrl + R - Save as .bmp (Full-width size 1:1)\n#   Ctrl + D - Save as .png (Half-width size 1:2) [Perl Required]\n#   Ctrl + F - Save as .png (Full-width size 1:1) [Perl Required]\n"
 			exit 0
 			;;
         ?)
-			printf "# Usage: $0 [-w width -l length -t title -b background -f file -h help]\n"
+			printf "# Usage: $0 [-w width -l length -t title -b bg_color -f file -c palette -x force_run -h help]\n"
 			exit 1
 			;;
     esac
@@ -112,16 +116,40 @@ done
 
 shift $(( OPTIND - 1 ))
 
+# Get terminal settings
+TTY_DEV="$(tty 2>/dev/null || echo "/dev/tty")"
+
+# Save terminal settings
+SAVED_STTY=""
+if [[ -t 1 ]]; then
+    SAVED_STTY="$(stty -g <"$TTY_DEV" 2>/dev/null || true)"
+fi
+
+# Chech support before doing anything. If -x flag presence, ignore
+if [[ "$FORCE_RUN" -ne 1 ]]; then
+	if [[ -z "${TERM:-}" || "$TERM" == "dumb" ]]; then
+		printf "Error: Dumb or uninitialized terminal environment ($TERM).\n" >&2
+		exit 1
+	fi
+	if [[ "$TERM" == "linux" ]] || [[ "$TTY_DEV" =~ ^/dev/tty[0-9]+$ ]]; then
+		printf "Error: Unsupported Linux Virtual Console detected ($TTY_DEV).\n" >&2
+		exit 1
+	fi
+	if [[ ! -c "$TTY_DEV" ]]; then
+		printf "Error: $TTY_DEV is not a valid character device.\n" >&2
+		exit 1
+	fi
+fi
+
+# Check presence width and length flags
 if [[ "$HAS_W" -ne "$HAS_H" ]]; then
 	echo "Error: Both -w and -h flags must be provided together." >&2
 	exit 1
 fi
 
-TTY_DEV="$(tty 2>/dev/null || echo "/dev/tty")"
-
-SAVED_STTY=""
-if [[ -t 1 ]]; then
-    SAVED_STTY="$(stty -g <"$TTY_DEV" 2>/dev/null || true)"
+# Check Truecolor support
+if [[ "${COLORTERM:-}" == *[Tt][Rr][Uu][Ee][Cc][Oo][Ll][Oo][Rr]* || "${COLORTERM:-}" == *24[Bb][Ii][Tt]* ]]; then
+	TRUECOLOR=1
 fi
 
 TERM_LINES=0
@@ -266,25 +294,6 @@ update_palette() {
 		9)	declare -n -g PALETTE_SELECT=XTERM_COLOR_MAP		;;
 		*)	declare -n -g PALETTE_SELECT=GNOME_COLOR_MAP		;; # Default
 	esac
-}
-
-check_mouse_support() {
-	if [[ -z "${TERM:-}" || "$TERM" == "dumb" ]]; then
-		printf "Error: Dumb or uninitialized terminal environment ($TERM).\n" >&2
-		return 1
-	fi
-
-	if [[ "$TERM" == "linux" ]] || [[ "$TTY_DEV" =~ ^/dev/tty[0-9]+$ ]]; then
-		printf "Error: Unsupported Linux Virtual Console detected ($TTY_DEV).\n" >&2
-		return 1
-	fi
-
-	if [[ ! -c "$TTY_DEV" ]]; then
-		printf "Error: $TTY_DEV is not a valid character device.\n" >&2
-		return 1
-	fi
-
-	return 0
 }
 
 cleanup() {
@@ -823,19 +832,6 @@ init_bg() {
 	done
 }
 
-top_title() {
-	rt="(P)alette $COLOR_PALETTE_TYPE (Q)uit "
-	if [[ "$EDIT" -eq 1 ]]; then
-		cap=$((TERM_COLS - ${#rt} - 4))
-		lt=" ${NAME:0:$cap} * "
-	else
-		cap=$((TERM_COLS - ${#rt} - 2))
-		lt=" ${NAME:0:$cap} "
-	fi
-	lrw=$((TERM_COLS - ${#lt}))
-	printf '\e[1;1H\e[7m%b%*b\e[0m' "$lt" "$lrw" "$rt" >"$TTY_DEV"
-}
-
 rgb_converter() {
 	local raw_str="$1"
 	local row="$2"
@@ -885,7 +881,188 @@ rgb_converter() {
 		"${new_raw}${char}\e[0m" >"$TTY_DEV"
 }
 
+# Start UI
+# Top Title
+top_title() {
+	IS_DRAW=1
+	use_mouse 0
+
+	rt="(P)alette $COLOR_PALETTE_TYPE (Q)uit "
+	if [[ "$EDIT" -eq 1 ]]; then
+		cap=$((TERM_COLS - ${#rt} - 4))
+		lt=" ${NAME:0:$cap} * "
+	else
+		cap=$((TERM_COLS - ${#rt} - 2))
+		lt=" ${NAME:0:$cap} "
+	fi
+	lrw=$((TERM_COLS - ${#lt}))
+	printf '\e[1;1H\e[7m%b%*b\e[0m' "$lt" "$lrw" "$rt" >"$TTY_DEV"
+	# Clear mouse buffers
+    while read -t 0.001 -n 10000 _; do :; done
+    IS_DRAW=0
+    use_mouse 1
+}
+# Side Color Picker
+side_color() {
+	IS_DRAW=1
+	use_mouse 0
+
+	local pos=$((TERM_COLS - 2))
+	# Truecolor or fallback mode
+	if [[ "$TRUECOLOR" -eq 1 ]]; then
+		printf '\e[2;%dH\e[48;2;%smBLK\e[0m' "$pos" "${PALETTE_SELECT["40"]// /;}" >"$TTY_DEV"
+		printf '\e[3;%dH\e[48;2;%sm\e[30mWHI\e[0m' "$pos" "${PALETTE_SELECT["47"]// /;}" >"$TTY_DEV"
+		printf '\e[4;%dH\e[48;2;%smRED\e[0m' "$pos" "${PALETTE_SELECT["41"]// /;}" >"$TTY_DEV"
+		printf '\e[5;%dH\e[48;2;%smGRE\e[0m' "$pos" "${PALETTE_SELECT["42"]// /;}" >"$TTY_DEV"
+		printf '\e[6;%dH\e[48;2;%smYEL\e[0m' "$pos" "${PALETTE_SELECT["43"]// /;}" >"$TTY_DEV"
+		printf '\e[7;%dH\e[48;2;%smBLU\e[0m' "$pos" "${PALETTE_SELECT["44"]// /;}" >"$TTY_DEV"
+		printf '\e[8;%dH\e[48;2;%smMAG\e[0m' "$pos" "${PALETTE_SELECT["45"]// /;}" >"$TTY_DEV"
+		printf '\e[9;%dH\e[48;2;%smCYA\e[0m' "$pos" "${PALETTE_SELECT["46"]// /;}" >"$TTY_DEV"
+		printf '\e[10;%dH\e[7mTRA\e[0m' "$pos" >"$TTY_DEV"
+	else
+		printf '\e[2;%dH\e[40mBLK\e[0m' "$pos" >"$TTY_DEV"
+		printf '\e[3;%dH\e[47;30mWHI\e[0m' "$pos" >"$TTY_DEV"
+		printf '\e[4;%dH\e[41mRED\e[0m' "$pos" >"$TTY_DEV"
+		printf '\e[5;%dH\e[42mGRE\e[0m' "$pos" >"$TTY_DEV"
+		printf '\e[6;%dH\e[43mYEL\e[0m' "$pos" >"$TTY_DEV"
+		printf '\e[7;%dH\e[44mBLU\e[0m' "$pos" >"$TTY_DEV"
+		printf '\e[8;%dH\e[45mMAG\e[0m' "$pos" >"$TTY_DEV"
+		printf '\e[9;%dH\e[46mCYA\e[0m' "$pos" >"$TTY_DEV"
+		printf '\e[10;%dH\e[7mTRA\e[0m' "$pos" >"$TTY_DEV"
+	fi
+	# Clear Old Color Pointer
+	printf '\e[10;%dH ' "$((pos - 1))" >"$TTY_DEV"
+	printf '\e[2;%dH ' "$((pos - 1))" >"$TTY_DEV"
+	printf '\e[3;%dH ' "$((pos - 1))" >"$TTY_DEV"
+	printf '\e[4;%dH ' "$((pos - 1))" >"$TTY_DEV"
+	printf '\e[5;%dH ' "$((pos - 1))" >"$TTY_DEV"
+	printf '\e[6;%dH ' "$((pos - 1))" >"$TTY_DEV"
+	printf '\e[7;%dH ' "$((pos - 1))" >"$TTY_DEV"
+	printf '\e[8;%dH ' "$((pos - 1))" >"$TTY_DEV"
+	printf '\e[9;%dH ' "$((pos - 1))" >"$TTY_DEV"
+
+	case "$PAINT_COLOR" in
+		0)  printf '\e[10;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+		1)  printf '\e[2;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+		2)  printf '\e[3;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+		3)  printf '\e[4;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+		4)  printf '\e[5;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+		5)  printf '\e[6;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+		6)  printf '\e[7;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+		7)  printf '\e[8;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+		8)  printf '\e[9;%dH#\e[0m' "$((pos - 1))" >"$TTY_DEV";;
+	esac
+	temp_char=" "
+	case "$PAINT_BG" in
+		0)
+			if [[ "$PAINT_COLOR" -eq 0 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[10;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+		1)
+			if [[ "$PAINT_COLOR" -eq 1 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[2;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+		2)
+			if [[ "$PAINT_COLOR" -eq 2 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[3;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+		3)
+			if [[ "$PAINT_COLOR" -eq 3 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[4;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+		4)
+			if [[ "$PAINT_COLOR" -eq 4 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[5;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+		5)
+			if [[ "$PAINT_COLOR" -eq 5 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[6;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+		6)
+			if [[ "$PAINT_COLOR" -eq 6 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[7;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+		7)
+			if [[ "$PAINT_COLOR" -eq 7 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[8;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+		8)
+			if [[ "$PAINT_COLOR" -eq 8 ]]; then
+				temp_char="#"
+			fi
+			printf '\e[9;%dH\e[41m%b\e[0m' "$((pos - 1))" "$temp_char" >"$TTY_DEV"
+			;;
+	esac
+	# Clear mouse buffers
+    while read -t 0.001 -n 10000 _; do :; done
+    IS_DRAW=0
+    use_mouse 1
+}
+# Bottom Bar
+bottom_bar() {
+	IS_DRAW=1
+	use_mouse 0
+
+	brsc=19
+	op1=" "
+	op2=" "
+	op3=" "
+	op4=" "
+	op5=" "
+	case "$PAINT_SHADE" in
+		1)
+		op1="["
+		op2="]"
+		;;
+		2)
+		op2="["
+		op3="]"
+		;;
+		3)
+		op3="["
+		op4="]"
+		;;
+		4)
+		op4="["
+		op5="]"
+		;;
+		*)
+		op4="["
+		op5="]"
+		;;
+	esac
+	brs="$op1\u2591\u2591$op2\u2592\u2592$op3\u2593\u2593$op4\u2588\u2588$op5 Shade "
+	printf '\e[%d;%dH%b' "$((TERM_LINES - 1))" "$((TERM_COLS - brsc))" "$brs"
+	printf '\e[%d;1H\e[7m%-*s\e[0m' "$TERM_LINES" "$TERM_COLS" " Size: ${PAINT_COL}x${PAINT_ROW} Pos: 0 0 " >"$TTY_DEV"
+	#Show memory
+	printf '\e[%d;2H%b' "$((CANVAS_MAX_LINES + 1))" "$MEM_USAGE_STR" >"$TTY_DEV"
+
+	# Clear mouse buffers
+    while read -t 0.001 -n 10000 _; do :; done
+    IS_DRAW=0
+    use_mouse 1
+}
+# Draw Paint
 draw_paint() {
+	IS_DRAW=1
+	use_mouse 0
+	calc_border
 	local min_row=2
 	local max_row=$((TERM_LINES - 2))
 	local min_col=1
@@ -955,147 +1132,40 @@ draw_paint() {
 			fi
 		fi
 	done
+	# Clear mouse buffers
+    while read -t 0.001 -n 10000 _; do :; done
+    IS_DRAW=0
+    use_mouse 1
 }
+# End UI
 
 draw_ui() {
 	IS_DRAW=1
 	use_mouse 0
 	# Clear Screen
     printf '\e[2J' >"$TTY_DEV"
+    # Clear mouse buffers
+    while read -t 0.001 -n 10000 _; do :; done
+    IS_DRAW=0
+    use_mouse 1
 
     if [[ TERM_LINES -ge 13 && TERM_COLS -ge 34 ]]; then
 		# Top
 		top_title
 
 		# Side
-		sps=$((TERM_COLS - 2))
-		printf '\e[2;%dH\e[40mBLK\e[0m' "$sps" >"$TTY_DEV"
-		printf '\e[3;%dH\e[30;47mWHI\e[0m' "$sps" >"$TTY_DEV"
-		printf '\e[4;%dH\e[41mRED\e[0m' "$sps" >"$TTY_DEV"
-		printf '\e[5;%dH\e[42mGRE\e[0m' "$sps" >"$TTY_DEV"
-		printf '\e[6;%dH\e[43mYEL\e[0m' "$sps" >"$TTY_DEV"
-		printf '\e[7;%dH\e[44mBLU\e[0m' "$sps" >"$TTY_DEV"
-		printf '\e[8;%dH\e[45mMAG\e[0m' "$sps" >"$TTY_DEV"
-		printf '\e[9;%dH\e[46mCYA\e[0m' "$sps" >"$TTY_DEV"
-		printf '\e[10;%dH\e[7mERA\e[0m' "$sps" >"$TTY_DEV"
-
-		case "$PAINT_COLOR" in
-			0)  printf '\e[10;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-			1)  printf '\e[2;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-			2)  printf '\e[3;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-			3)  printf '\e[4;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-			4)  printf '\e[5;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-			5)  printf '\e[6;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-			6)  printf '\e[7;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-			7)  printf '\e[8;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-			8)  printf '\e[9;%dH#\e[0m' "$((sps - 1))" >"$TTY_DEV";;
-		esac
-		temp_char=" "
-		case "$PAINT_BG" in
-			0)
-				if [[ "$PAINT_COLOR" -eq 0 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[10;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-			1)
-				if [[ "$PAINT_COLOR" -eq 1 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[2;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-			2)
-				if [[ "$PAINT_COLOR" -eq 2 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[3;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-			3)
-				if [[ "$PAINT_COLOR" -eq 3 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[4;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-			4)
-				if [[ "$PAINT_COLOR" -eq 4 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[5;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-			5)
-				if [[ "$PAINT_COLOR" -eq 5 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[6;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-			6)
-				if [[ "$PAINT_COLOR" -eq 6 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[7;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-			7)
-				if [[ "$PAINT_COLOR" -eq 7 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[8;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-			8)
-				if [[ "$PAINT_COLOR" -eq 8 ]]; then
-					temp_char="#"
-				fi
-				printf '\e[9;%dH\e[41m%b\e[0m' "$((sps - 1))" "$temp_char" >"$TTY_DEV"
-				;;
-		esac
+		side_color
 
 		# Bottom
-		brsc=19
-		op1=" "
-		op2=" "
-		op3=" "
-		op4=" "
-		op5=" "
-		case "$PAINT_SHADE" in
-			1)
-			op1="["
-			op2="]"
-			;;
-			2)
-			op2="["
-			op3="]"
-			;;
-			3)
-			op3="["
-			op4="]"
-			;;
-			4)
-			op4="["
-			op5="]"
-			;;
-			*)
-			op4="["
-			op5="]"
-			;;
-		esac
-		brs="$op1\u2591\u2591$op2\u2592\u2592$op3\u2593\u2593$op4\u2588\u2588$op5 Shade "
-		printf '\e[%d;%dH%b' "$((TERM_LINES - 1))" "$((TERM_COLS - brsc))" "$brs"
-		printf '\e[%d;1H\e[7m%-*s\e[0m' "$TERM_LINES" "$TERM_COLS" " Size: ${PAINT_COL}x${PAINT_ROW} Pos: 0 0 " >"$TTY_DEV"
-
-		#Show memory
-		printf '\e[%d;2H%b' "$((CANVAS_MAX_LINES + 1))" "$MEM_USAGE_STR" >"$TTY_DEV"
+		bottom_bar
     else
 		MSG="Please resize to 34 by 13."
 		save_file "./$NAME" "bytes" # Save unsave by force
 		exit 1
     fi
 
-    calc_border
+    # Draw Actual Paint
     draw_paint
-
-    # Clear mouse buffers
-    while read -t 0.001 -n 10000 _; do :; done
-    IS_DRAW=0
-    use_mouse 1
 }
 
 handle_resize() {
@@ -1112,11 +1182,6 @@ use_mouse() {
 }
 
 init_terminal() {
-	if ! check_mouse_support; then
-		printf "Error: Unsupported terminal environment ($TTY_DEV).\n" >&2
-		exit 1
-	fi
-
 	if [[ -n "$FILE_PATH" ]]; then
 		load_file $FILE_PATH
 		temp_name="${FILE_PATH##*/}"
@@ -1289,7 +1354,7 @@ paint_pixel() {
     char+="\e[0m"
 
     save_colors "$(( row - PAINT_OUTLINE_TOP ))" "$(( col - PAINT_OUTLINE_LEFT ))" "$char"
-    rgb_converter "$char" "$row" "$col"
+    rgb_converter "$(printf '%b' "$char")" "$row" "$col"
 
     CURSOR_ROW=$row
     CURSOR_COL=$col
@@ -1304,10 +1369,10 @@ scroll_handler() {
 				CURSOR_COL=0
 				if [[ "$PAINT_ROW_SHIFT" -eq -1 ]]; then
 					PAINT_ROW_SHIFT=0
-					draw_ui
+					draw_paint
 				else
 					(( PAINT_ROW_SHIFT += 1 ))
-					draw_ui
+					draw_paint
 				fi
 			fi
 			;;
@@ -1317,10 +1382,10 @@ scroll_handler() {
 				CURSOR_COL=0
 				if [[ "$PAINT_ROW_SHIFT" -eq 1 ]]; then
 					PAINT_ROW_SHIFT=0
-					draw_ui
+					draw_paint
 				else
 					(( PAINT_ROW_SHIFT -= 1 ))
-					draw_ui
+					draw_paint
 				fi
 			fi
 			;;
@@ -1330,10 +1395,10 @@ scroll_handler() {
 				CURSOR_COL=0
 				if [[ "$PAINT_COL_SHIFT" -eq -1 ]]; then
 					PAINT_COL_SHIFT=0
-					draw_ui
+					draw_paint
 				else
 					(( PAINT_COL_SHIFT += 1 ))
-					draw_ui
+					draw_paint
 				fi
 			fi
 			;;
@@ -1343,10 +1408,10 @@ scroll_handler() {
 				CURSOR_COL=0
 				if [[ "$PAINT_COL_SHIFT" -eq 1 ]]; then
 					PAINT_COL_SHIFT=0
-					draw_ui
+					draw_paint
 				else
 					(( PAINT_COL_SHIFT -= 1 ))
-					draw_ui
+					draw_paint
 				fi
 			fi
 			;;
@@ -1382,39 +1447,39 @@ click_handler() {
 				case "$row" in
 					2)
 						PAINT_COLOR=1
-						draw_ui
+						side_color
 					;;
 					3)
 						PAINT_COLOR=2
-						draw_ui
+						side_color
 					;;
 							4)
 						PAINT_COLOR=3
-						draw_ui
+						side_color
 					;;
 							5)
 						PAINT_COLOR=4
-						draw_ui
+						side_color
 					;;
 							6)
 						PAINT_COLOR=5
-						draw_ui
+						side_color
 					;;
 							7)
 						PAINT_COLOR=6
-						draw_ui
+						side_color
 					;;
 							8)
 						PAINT_COLOR=7
-						draw_ui
+						side_color
 					;;
 							9)
 						PAINT_COLOR=8
-						draw_ui
+						side_color
 					;;
 							10)
 						PAINT_COLOR=0
-						draw_ui
+						side_color
 					;;
 				esac
 			elif [[ "$row" -eq "$((TERM_LINES - 1))" ]]; then
@@ -1422,16 +1487,16 @@ click_handler() {
 				brsc=19
 				if [[ "$col" -eq "$((TERM_COLS - brsc + 1))" || "$col" -eq "$((TERM_COLS - brsc + 2))" ]]; then
 					PAINT_SHADE=1
-					draw_ui
+					bottom_bar
 				elif [[ "$col" -eq "$((TERM_COLS - brsc + 4))" || "$col" -eq "$((TERM_COLS - brsc + 5))" ]]; then
 					PAINT_SHADE=2
-					draw_ui
+					bottom_bar
 				elif [[ "$col" -eq "$((TERM_COLS - brsc + 7))" || "$col" -eq "$((TERM_COLS - brsc + 8))" ]]; then
 					PAINT_SHADE=3
-					draw_ui
+					bottom_bar
 				elif [[ "$col" -eq "$((TERM_COLS - brsc + 10))" || "$col" -eq "$((TERM_COLS - brsc + 11))" ]]; then
 					PAINT_SHADE=4
-					draw_ui
+					bottom_bar
 				fi
 			else
 				DRAG=1
@@ -1449,39 +1514,39 @@ click_handler() {
 				case "$row" in
 					2)
 						PAINT_BG=1
-						draw_ui
+						side_color
 					;;
 					3)
 						PAINT_BG=2
-						draw_ui
+						side_color
 					;;
 					4)
 						PAINT_BG=3
-						draw_ui
+						side_color
 					;;
 					5)
 						PAINT_BG=4
-						draw_ui
+						side_color
 					;;
 					6)
 						PAINT_BG=5
-						draw_ui
+						side_color
 					;;
 					7)
 						PAINT_BG=6
-						draw_ui
+						side_color
 					;;
 					8)
 						PAINT_BG=7
-						draw_ui
+						side_color
 					;;
 					9)
 						PAINT_BG=8
-						draw_ui
+						side_color
 					;;
 					10)
 						PAINT_BG=0
-						draw_ui
+						side_color
 					;;
 				esac
 			fi
@@ -1559,7 +1624,7 @@ main() {
 		if [[ "$RESIZE" -eq 1 ]]; then
 			RESIZE=0
 			update_dimensions
-			draw_ui
+			draw_ui # Redraw entire UI
 			CURSOR_ROW=0
 			CURSOR_COL=0
 		fi
@@ -1595,7 +1660,7 @@ main() {
 					break
 				fi
 		fi
-		if [[ "$byte" = "p" || "$byte" = "P" ]]; then
+		if [[ "$byte" == "p" || "$byte" == "P" ]]; then
 			use_mouse 0
 			temp_col=$(( (TERM_COLS / 2) - 11 + 1 ))
 			input_buffer="**"
