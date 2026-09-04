@@ -177,6 +177,8 @@ RESIZE=0
 DRAG=0
 IS_DRAW=0
 IS_SAVE=0
+IS_QUIT=0
+IS_PALETTE=0
 MEM_USAGE_STR="0 KB"
 
 PERL_SUPPORT=0
@@ -305,7 +307,7 @@ cleanup() {
     fi
     stty echo icanon ixon <"$TTY_DEV" 2>/dev/null || true
 
-    printf "$MSG\n"
+    echo "$MSG"
 }
 
 handle_signal() {
@@ -318,12 +320,11 @@ ansi_to_rgba_bytes() {
     local raw="" char=" "
     local a=0 r=0 g=0 b=0
 
-    if [[ "$str" =~ \e\[([0-9;]+)m ]]; then
-        raw="${BASH_REMATCH[1]}"
-    fi
+    raw="${str#*$'\e['}"
+	raw="${raw%%m*}"
 
     char="${str#*m}"
-    char="${char:0:${#char}-5}"
+    char="${char%%$'\e'*}"
 
     IFS=';' read -ra codes <<< "$raw"
 
@@ -339,19 +340,19 @@ ansi_to_rgba_bytes() {
 
     # Set opacity
     local bg_a=100 fg_a=0
-    if [[ "$char" == "\u2588" ]]; then
+    if [[ "$char" == $'\u2588' ]]; then
         bg_a=0
         fg_a=100
         a=255
-    elif [[ "$char" == "\u2593" ]]; then
+    elif [[ "$char" == $'\u2593' ]]; then
         bg_a=25
         fg_a=75
         a=191
-    elif [[ "$char" == "\u2592" ]]; then
+    elif [[ "$char" == $'\u2592' ]]; then
         bg_a=50
         fg_a=50
         a=127
-    elif [[ "$char" == "\u2591" ]]; then
+    elif [[ "$char" == $'\u2591' ]]; then
         bg_a=75
         fg_a=25
         a=63
@@ -897,6 +898,13 @@ top_title() {
 	fi
 	lrw=$((TERM_COLS - ${#lt}))
 	printf '\e[1;1H\e[7m%b%*b\e[0m' "$lt" "$lrw" "$rt" >"$TTY_DEV"
+
+	# Quit Popup
+	if [[ "$IS_QUIT" -eq 1 ]]; then
+		temp_col=$(( (TERM_COLS / 2) - 16 + 1 ))
+		printf '\e[1;%dH\e[43;30m[Quit without saving? (Y)es (N)o]\e[0m' "$temp_col" # Popup Position
+	fi
+
 	# Clear mouse buffers
     while read -t 0.001 -n 10000 _; do :; done
     IS_DRAW=0
@@ -1201,6 +1209,11 @@ init_terminal() {
     stty -echo -icanon -ixon min 0 time 0 <"$TTY_DEV" 2>/dev/null
 
     update_dimensions
+    # Check teminal size
+	if [[ TERM_LINES -lt 13 || TERM_COLS -lt 34 ]]; then
+		MSG="Please resize terminal to 34 by 13."
+		exit 1
+	fi
 
     if [[ -z "$FILE_PATH" ]]; then
 		init_bg
@@ -1605,10 +1618,19 @@ save_parse() {
 	top_title
 }
 
+palette_popup() {
+	local input="${1:-}"
+	local temp_col=$(( (TERM_COLS / 2) - 11 + 1 ))
+	local input_buffer="**"
+	input_buffer+="$input"
+	printf '\e[1;%dH\e[43;30m[ Color Palette [%s] ]\e[0m' "$temp_col" "${input_buffer: -2}" # Popup Position
+}
+
 main() {
     init_terminal
 
     local loop_ctr=0
+    local pal_buf+="$COLOR_PALETTE_TYPE"
     get_mem_usage
     printf '\e[%d;2H%b' "$((CANVAS_MAX_LINES + 1))" "$MEM_USAGE_STR" >"$TTY_DEV"
 
@@ -1628,135 +1650,203 @@ main() {
 			CURSOR_ROW=0
 			CURSOR_COL=0
 		fi
-
-		#Read stdin and quit with 'q', palette with 'p'
+		#Get inputs
 		byte=""
 		IFS= LC_ALL=C read -r -t 0.01 -n 1 -d '' byte <"$TTY_DEV" || continue
-		if [[ "$byte" = "q" || "$byte" = "Q" ]]; then
-				if [[ "$EDIT" -eq 1 ]]; then
+
+		if [[ "$IS_QUIT" -eq 0 ]]; then # Skip if quitting or change color palette
+			if [[ "$IS_PALETTE" -eq 0 ]]; then
+				#Read stdin and quit with 'q', palette with 'p'
+				if [[ "$byte" = "q" || "$byte" = "Q" ]]; then
+						if [[ "$EDIT" -eq 1 ]]; then
+							IS_QUIT=1
+							top_title
+							use_mouse 0
+							continue
+						else
+							break
+						fi
+				fi
+				if [[ "$byte" == "p" || "$byte" == "P" ]]; then
+					IS_PALETTE=1
+					palette_popup "$pal_buf"
 					use_mouse 0
-					temp_col=$(( (TERM_COLS / 2) - 16 + 1 ))
-					printf '\e[1;%dH\e[43;30m[Quit without saving? (Y)es (N)o]\e[0m' "$temp_col" # Popup Position
-					is_exit=0
+					continue
+				fi
+				#Char escape
+				if [[ "$byte" = $'\x1b' ]]; then
+					seq=""
+
 					while true; do
-						read -r -s -n 1 key
-						case "${key,,}" in
-							y)
-								MSG="Quitting without saving..."
-								is_exit=1
-								break
-								;;
-							n)
-								break
-								;;
-							*)	;;
-						esac
+						IFS= LC_ALL=C read -r -t 0.01 -n 1 -d '' b <"$TTY_DEV" || break
+						seq="${seq}${b}"
+
+						# Break on Mouse
+						if [[ "$seq" =~ ^\[\<([0-9]+)\;([0-9]+)\;([0-9]+)([mM])$ ]]; then
+							break
+						fi
+						# Break on Keyboard
+						if [[ "$seq" =~ ^\[[A-Za-z~]$ ]]; then
+							break
+						fi
 					done
-					top_title
 
-					if [[ "$is_exit" -eq 1 ]]; then break; fi
-					use_mouse 1
-				else
-					break
-				fi
-		fi
-		if [[ "$byte" == "p" || "$byte" == "P" ]]; then
-			use_mouse 0
-			temp_col=$(( (TERM_COLS / 2) - 11 + 1 ))
-			input_buffer="**"
-			while true; do
-				printf '\e[1;%dH\e[43;30m[ Color Palette [%s] ]\e[0m' "$temp_col" "${input_buffer: -2}" # Popup
-				read -r -s -n 1 key
-				case "$key" in
-					[0-9]) # Digits
-						if [[ "${#input_buffer}" -lt 4 ]]; then
-							input_buffer+="$key"
-						fi
-						;;
-					$'\x7f'|$'\x08') # Backspace
-						if [[ -n "$input_buffer" && "${#input_buffer}" -gt 2 ]]; then
-							input_buffer="${input_buffer%?}"
-						fi
-						;;
-					""|$'\r'|$'\n') # Enter key
-						strip="${input_buffer##*[^0-9]}"
-						num=$(( 10#${strip:-0} ))
-						case "$num" in
-							1)	COLOR_PALETTE_TYPE=1;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							2)	COLOR_PALETTE_TYPE=2;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							3)	COLOR_PALETTE_TYPE=3;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							4)	COLOR_PALETTE_TYPE=4;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							5)	COLOR_PALETTE_TYPE=5;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							6)	COLOR_PALETTE_TYPE=6;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							7)	COLOR_PALETTE_TYPE=7;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							8)	COLOR_PALETTE_TYPE=8;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							9)	COLOR_PALETTE_TYPE=9;	EDIT=1;	update_palette;	draw_ui;	break	;;
-							*) # None
-								printf '\e[1;%dH\e[41;30m[   Invalid Number   ]\e[0m' "$temp_col" # Popup
-								sleep 1
-								;;
+					# Parse SGR Mouse Sequence
+					if [[ "$seq" =~ ^\[\<([0-9]+)\;([0-9]+)\;([0-9]+)([mM])$ ]]; then
+						btn="${BASH_REMATCH[1]}"
+						col="${BASH_REMATCH[2]}"
+						row="${BASH_REMATCH[3]}"
+						state="${BASH_REMATCH[4]}"
+
+						click_handler "$btn" "$col" "$row" "$state"
+
+					# Parse Keyboard Arrow Keys (\e[A, \e[B, \e[C, \e[D)
+					elif [[ "$seq" =~ ^\[([ABCD])$ ]]; then
+						dir="${BASH_REMATCH[1]}"
+
+						case "$dir" in
+							A)	click_handler "k_up" "$CURSOR_COL" "$CURSOR_ROW" "M" ;;    # Up Arrow
+							B)	click_handler "k_down" "$CURSOR_COL" "$CURSOR_ROW" "M" ;;  # Down Arrow
+							C)	click_handler "k_right" "$CURSOR_COL" "$CURSOR_ROW" "M" ;; # Right Arrow
+							D)	click_handler "k_left" "$CURSOR_COL" "$CURSOR_ROW" "M" ;;  # Left Arrow
 						esac
-						;;
-					p|P) # Cancel
-						break
-						;;
-					*)	;;
-				esac
-			done
-			top_title
-			use_mouse 1
+					fi
+				# Ctrl + S (Save as bin)
+				elif [[ "$byte" = $'\x13' ]]; then save_parse "bytes"
+				# Ctrl + A (Save as PAM)
+				elif [[ "$byte" = $'\x01' ]]; then save_parse "pam"
+				# Ctrl + E (Save as BMP Half-width size)
+				elif [[ "$byte" = $'\x05' ]]; then save_parse "bmp1"
+				# Ctrl + R (Save as BMP Full-width size)
+				elif [[ "$byte" = $'\x12' ]]; then save_parse "bmp"
+				#Ctrl + D (Save as PNG Half-width size)
+				elif [[ "$byte" = $'\x04' ]]; then save_parse "png1"
+				#Ctrl + F (Save as PNG Full-width size)
+				elif [[ "$byte" = $'\x06' ]]; then save_parse "png"
+				fi
+			fi
 		fi
 
-		#Char escape
-		if [[ "$byte" = $'\x1b' ]]; then
-			seq=""
-
-			while true; do
-				IFS= LC_ALL=C read -r -t 0.01 -n 1 -d '' b <"$TTY_DEV" || break
-				seq="${seq}${b}"
-
-				# Break on Mouse
-				if [[ "$seq" =~ ^\[\<([0-9]+)\;([0-9]+)\;([0-9]+)([mM])$ ]]; then
-					break
-				fi
-				# Break on Keyboard
-				if [[ "$seq" =~ ^\[[A-Za-z~]$ ]]; then
-					break
-				fi
-			done
-
-			# Parse SGR Mouse Sequence
-			if [[ "$seq" =~ ^\[\<([0-9]+)\;([0-9]+)\;([0-9]+)([mM])$ ]]; then
-				btn="${BASH_REMATCH[1]}"
-				col="${BASH_REMATCH[2]}"
-				row="${BASH_REMATCH[3]}"
-				state="${BASH_REMATCH[4]}"
-
-				click_handler "$btn" "$col" "$row" "$state"
-
-			# Parse Keyboard Arrow Keys (\e[A, \e[B, \e[C, \e[D)
-			elif [[ "$seq" =~ ^\[([ABCD])$ ]]; then
-				dir="${BASH_REMATCH[1]}"
-
-				case "$dir" in
-					A)	click_handler "k_up" "$CURSOR_COL" "$CURSOR_ROW" "M" ;;    # Up Arrow
-					B)	click_handler "k_down" "$CURSOR_COL" "$CURSOR_ROW" "M" ;;  # Down Arrow
-					C)	click_handler "k_right" "$CURSOR_COL" "$CURSOR_ROW" "M" ;; # Right Arrow
-					D)	click_handler "k_left" "$CURSOR_COL" "$CURSOR_ROW" "M" ;;  # Left Arrow
-				esac
+		# Quit
+		if [[ "$IS_QUIT" -eq 1 ]]; then
+			if [[ "$byte" = "y" || "$byte" = "Y" ]]; then
+				MSG="Quitting without saving..."
+				break
+			elif [[ "$byte" = "n" || "$byte" = "n" ]]; then
+				IS_QUIT=0
+				top_title
+				use_mouse 1
 			fi
-		# Ctrl + S (Save as bin)
-		elif [[ "$byte" = $'\x13' ]]; then save_parse "bytes"
-		# Ctrl + A (Save as PAM)
-		elif [[ "$byte" = $'\x01' ]]; then save_parse "pam"
-		# Ctrl + E (Save as BMP Half-width size)
-		elif [[ "$byte" = $'\x05' ]]; then save_parse "bmp1"
-		# Ctrl + R (Save as BMP Full-width size)
-		elif [[ "$byte" = $'\x12' ]]; then save_parse "bmp"
-		#Ctrl + D (Save as PNG Half-width size)
-		elif [[ "$byte" = $'\x04' ]]; then save_parse "png1"
-		#Ctrl + F (Save as PNG Full-width size)
-		elif [[ "$byte" = $'\x06' ]]; then save_parse "png"
+		fi
+
+		# Palette
+		if [[ "$IS_PALETTE" -eq 1 ]]; then
+			case "$byte" in
+				[0-9]) # Digits
+					if [[ "${#pal_buf}" -lt 2 ]]; then
+						pal_buf+="$byte"
+					fi
+					palette_popup "$pal_buf"
+					use_mouse 0
+					;;
+				$'\x7f'|$'\x08') # Backspace
+					if [[ -n "$pal_buf" && "${#pal_buf}" -gt 0 ]]; then
+						pal_buf="${pal_buf%?}"
+					fi
+					palette_popup "$pal_buf"
+					use_mouse 0
+					;;
+				""|$'\r'|$'\n') # Enter key
+					strip="${pal_buf##*[^0-9]}"
+					num=$(( 10#${strip:-0} ))
+					case "$num" in
+						1)
+							COLOR_PALETTE_TYPE=1;
+							EDIT=1;
+							update_palette;
+							draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						2)
+							COLOR_PALETTE_TYPE=2;
+							EDIT=1;
+							update_palette;
+							draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						3)
+							COLOR_PALETTE_TYPE=3;
+							EDIT=1;
+							update_palette;	draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						4)
+							COLOR_PALETTE_TYPE=4;
+							EDIT=1;
+							update_palette;
+							draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						5)
+							COLOR_PALETTE_TYPE=5;
+							EDIT=1;
+							update_palette;
+							draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						6)
+							COLOR_PALETTE_TYPE=6;
+							EDIT=1;
+							update_palette;
+							draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						7)
+							COLOR_PALETTE_TYPE=7;
+							EDIT=1;	update_palette;
+							draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						8)
+							COLOR_PALETTE_TYPE=8;
+							EDIT=1;
+							update_palette;
+							draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						9)
+							COLOR_PALETTE_TYPE=9;
+							EDIT=1;
+							update_palette;
+							draw_ui;
+							IS_PALETTE=0
+							use_mouse 1
+							;;
+						*) # None
+							printf '\e[1;%dH\e[41;30m[   Invalid Number   ]\e[0m' "$(( (TERM_COLS / 2) - 11 + 1 ))" # Popup
+							sleep 1
+							palette_popup "$pal_buf"
+							;;
+					esac
+					;;
+				p|P) # Cancel
+					IS_PALETTE=0
+					top_title
+					use_mouse 1
+					;;
+				*)
+					palette_popup "$pal_buf"
+					use_mouse 0
+					;;
+			esac
 		fi
     done
 }
