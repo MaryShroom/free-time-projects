@@ -65,8 +65,8 @@ cleanup() {
 	    stty sane icanon echo <"$TTY_DEV" 2>/dev/null
 	fi
 
-	read -n 10 -p "Player Name (Max 10 characters) : " player_name
-	printf "Player : ${player_name:-Player}, Speed : $SPEED , Score : $SCORE\n" | tee -a ~/scores.txt
+	read -rn 10 -p "Player Name (Max 10 characters) : " player_name
+	printf 'Player : %s, Speed : %d , Score : %d\n' "${player_name:-Player}" "$SPEED" "$SCORE" | tee -a ~/scores.txt
 }
 
 trap cleanup EXIT INT TERM
@@ -94,7 +94,7 @@ init_box() {
     for ((i=1; i<=width; i++)); do printf "\u2550"; done
     printf "\u2557"
     move_cursor $row $(( ( width / 2 ) - (${#title} / 2) + col + 1 ))
-    printf "$title"
+    printf '%s' "$title"
 
     # Box
     # Top
@@ -136,13 +136,15 @@ init_box() {
 draw_snake() {
     local type=$1
     local row=$(( 2 + $2 ))
-    local col=$(( 2 + ( $3 * $GAP ) - ( $GAP - 1 ) ))
+    local col=$(( 2 + ( $3 * GAP ) - ( GAP - 1 ) ))
     local res="\e[0m"
 
     # Snake Tiles
-    local s_body=$(printf '\u2592%.0s' $(seq 1 $GAP))
-    local s_head=$(printf '\u2588%.0s' $(seq 1 $GAP))
-    local s_food=$(printf ' %.0s' $(seq 1 $GAP))
+    local s_body s_head s_food
+
+    s_body=$(printf '\u2592%.0s' $(seq 1 "$GAP"))
+    s_head=$(printf '\u2588%.0s' $(seq 1 "$GAP"))
+    s_food=$(printf ' %.0s' $(seq 1 "$GAP"))
 
     #Food generator
     local foods=("\e[41m$s_food$res" "\e[42m$s_food$res" "\e[43m$s_food$res" "\e[44m$s_food$res" "\e[45m$s_food$res" "\e[46m$s_food$res")
@@ -152,10 +154,10 @@ draw_snake() {
     # Draw
     move_cursor "$row" "$col"
     case "$type" in
-	sbody)		printf "$s_body" ;;
-	shead)		printf "$s_head" ;;
-	food)		printf "$food" ;;
-	0)		printf ' %.0s' $(seq 1 $GAP) ;;
+	sbody)		printf '%b' "$s_body" ;;
+	shead)		printf '%b' "$s_head" ;;
+	food)		printf '%b' "$food" ;;
+	0)		printf ' %.0s' $(seq 1 "$GAP") ;;
 	*)		echo "ERROR" ;;
     esac
 }
@@ -220,8 +222,9 @@ engine() {
     local s_body_col=("$(( ( width / 2 ) - 1 + ( ( width / 2 ) % 2 ) - 1 ))" "$(( ( width / 2 ) - 1 + ( ( width / 2 ) % 2 ) ))")
 
     #Initial Food
-    local food_pos=$(food_gen "$height" "$width" s_body_row s_body_col)
-    declare -A local food=()
+    local food_pos
+    food_pos=$(food_gen "$height" "$width" s_body_row s_body_col)
+    local -A food=()
     food[row]=$(echo "$food_pos" | cut -d':' -f1)
     food[col]=$(echo "$food_pos" | cut -d':' -f2)
 
@@ -254,7 +257,7 @@ engine() {
 	    if (( speed < 50 )); then
 		(( ++speed ))
 		timeout=$(( 500000 - (speed - 1) * 10000 ))
-		move_cursor $((2 + height + 3)) $(( ( GAP * width ) ))
+		move_cursor $((2 + height + 3)) $(( GAP * width ))
     		printf "%02d" "$speed"
 	    fi
 	fi

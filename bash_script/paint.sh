@@ -69,7 +69,7 @@ while getopts "w:l:t:b:f:c:xh" opt; do
 			;;
 		x)  FORCE_RUN=1;	;;
 		h)
-			printf "# Usage: $0 [-w width -l length -t title -b bg_color -f file -c palette -x force_run -h help]\n"
+			printf '# Usage: %s [-w width -l length -t title -b bg_color -f file -c palette -x force_run -h help]\n' "$0"
 			printf "#   -w  Set Width\n#   -l  Set Length/Height\n#   -t  Set Title\n#   -b  Set Background Color (Refer below)\n#   -f  Open .bin File\n#   -c  Set Color Palette (Refer Below)\n#       [If terminal support truecolor. Does not affect on save]\n#   -x  Force run [NOT RECOMMENDED]\n#   -h  Show Help\n#\n"
 			printf "# Default backgound color (White)\n#   0 - Transparent\n#   1 - Black\n#   2 - White\n#   3 - Red\n#   4 - Green\n#   5 - Yellow\n#   6 - Blue\n#   7 - Magenta\n#   8 - Cyan\n#\n"
 			printf "# Color Palette [If terminal support truecolor. Does not affect on save]\n"
@@ -108,7 +108,7 @@ while getopts "w:l:t:b:f:c:xh" opt; do
 			exit 0
 			;;
         ?)
-			printf "# Usage: $0 [-w width -l length -t title -b bg_color -f file -c palette -x force_run -h help]\n"
+			printf '# Usage: %s [-w width -l length -t title -b bg_color -f file -c palette -x force_run -h help]\n' "$0"
 			exit 1
 			;;
     esac
@@ -128,15 +128,15 @@ fi
 # Chech support before doing anything. If -x flag presence, ignore
 if [[ "$FORCE_RUN" -ne 1 ]]; then
 	if [[ -z "${TERM:-}" || "$TERM" == "dumb" ]]; then
-		printf "Error: Dumb or uninitialized terminal environment ($TERM).\n" >&2
+		printf 'Error: Dumb or uninitialized terminal environment (%s).\n' "$TERM" >&2
 		exit 1
 	fi
 	if [[ "$TERM" == "linux" ]] || [[ "$TTY_DEV" =~ ^/dev/tty[0-9]+$ ]]; then
-		printf "Error: Unsupported Linux Virtual Console detected ($TTY_DEV).\n" >&2
+		printf 'Error: Unsupported Linux Virtual Console detected (%s).\n' "$TTY_DEV" >&2
 		exit 1
 	fi
 	if [[ ! -c "$TTY_DEV" ]]; then
-		printf "Error: $TTY_DEV is not a valid character device.\n" >&2
+		printf 'Error: %s is not a valid character device.\n' "$TTY_DEV" >&2
 		exit 1
 	fi
 fi
@@ -184,6 +184,7 @@ MEM_USAGE_STR="0 KB"
 PERL_SUPPORT=0
 
 # Color Palette 1
+# shellcheck disable=SC2034
 declare -A GNOME_COLOR_MAP=(
     [30]="23 20 33"     [40]="23 20 33"     # Black
     [31]="192 28 40"    [41]="192 28 40"    # Red
@@ -195,6 +196,7 @@ declare -A GNOME_COLOR_MAP=(
     [37]="208 207 204"  [47]="208 207 204"  # White
 )
 # Color Palette 2
+# shellcheck disable=SC2034
 declare -A ALACRITTY_COLOR_MAP=(
     [30]="69 71 90"		[40]="69 71 90"		# Black
     [31]="243 139 168" 	[41]="243 139 168"  # Red
@@ -206,6 +208,7 @@ declare -A ALACRITTY_COLOR_MAP=(
     [37]="186 194 222"	[47]="186 194 222"  # White
 )
 # Color Palette 3
+# shellcheck disable=SC2034
 declare -A KONSOLE_COLOR_MAP=(
     [30]="35 38 41"		[40]="35 38 41"		# Black
     [31]="237 21 21" 	[41]="237 21 21"  	# Red
@@ -217,6 +220,7 @@ declare -A KONSOLE_COLOR_MAP=(
     [37]="252 252 252"	[47]="252 252 252"  # White
 )
 # Color Palette 4
+# shellcheck disable=SC2034
 declare -A WEZTERM_COLOR_MAP=(
     [30]="0 0 0"		[40]="0 0 0"		# Black
     [31]="204 0 0" 		[41]="204 0 0"  	# Red
@@ -228,6 +232,7 @@ declare -A WEZTERM_COLOR_MAP=(
     [37]="211 215 207"	[47]="211 215 207"  # White
 )
 # Color Palette 5
+# shellcheck disable=SC2034
 declare -A XFCE4_COLOR_MAP=(
     [30]="0 0 0"		[40]="0 0 0"		# Black
     [31]="170 0 0" 		[41]="170 0 0"  	# Red
@@ -239,6 +244,7 @@ declare -A XFCE4_COLOR_MAP=(
     [37]="170 170 170"	[47]="170 170 170"  # White
 )
 # Color Palette 6
+# shellcheck disable=SC2034
 declare -A KITTY_COLOR_MAP=(
     [30]="0 0 0"		[40]="0 0 0"		# Black
     [31]="204 4 3" 		[41]="204 4 3"  	# Red
@@ -250,6 +256,7 @@ declare -A KITTY_COLOR_MAP=(
     [37]="221 221 221"	[47]="221 221 221"  # White
 )
 # Color Palette 7
+# shellcheck disable=SC2034
 declare -A ITERM2_COLOR_MAP=(
     [30]="7 54 66"		[40]="7 54 66"		# Black
     [31]="220 50 47" 	[41]="220 50 47"  	# Red
@@ -261,6 +268,7 @@ declare -A ITERM2_COLOR_MAP=(
     [37]="238 232 213"	[47]="238 232 213"  # White
 )
 # Color Palette 8
+# shellcheck disable=SC2034
 declare -A NORD_COLOR_MAP=(
     [30]="59 66 82"		[40]="59 66 82"		# Black
     [31]="191 97 106" 	[41]="191 97 106"	# Red
@@ -272,6 +280,7 @@ declare -A NORD_COLOR_MAP=(
     [37]="229 233 240"	[47]="229 233 240"  # White
 )
 # Color Palette 9
+# shellcheck disable=SC2034
 declare -A XTERM_COLOR_MAP=(
     [30]="0 0 0"		[40]="0 0 0"		# Black
     [31]="205 0 0" 		[41]="205 0 0"  	# Red
@@ -417,7 +426,7 @@ pam_to_bmp() {
 	# Octal Binary Encoders
 	le32() {
 		local v=$1
-		printf "\\$(printf '%03o\\%03o\\%03o\\%03o' \
+		printf '%b' "\\$(printf '%03o\\%03o\\%03o\\%03o' \
 			$(( v & 0xFF )) \
 			$(( (v >> 8) & 0xFF )) \
 			$(( (v >> 16) & 0xFF )) \
@@ -426,7 +435,7 @@ pam_to_bmp() {
 
 	le16() {
 		local v=$1
-		printf "\\$(printf '%03o\\%03o' \
+		printf '%b' "\\$(printf '%03o\\%03o' \
 			$(( v & 0xFF )) \
 			$(( (v >> 8) & 0xFF )))"
 	}
@@ -460,9 +469,11 @@ pam_to_bmp() {
 	# Read PAM raw binary stream as zero-padded 2-digit hex values
 	local raw_bytes
 	if command -v hexdump >/dev/null 2>&1; then
+		# shellcheck disable=SC2207
 		raw_bytes=($(hexdump -v -e '1/1 "%02x "'))
 	else
 		# Fallback for minimal systems using od
+		# shellcheck disable=SC2207
 		raw_bytes=($(od -An -v -t x1 | tr -s ' ' | sed 's/^ //' | tr ' ' '\n' | awk '{printf "%02s\n", $0}' | tr ' ' '0'))
 	fi
 
@@ -644,7 +655,7 @@ saving_info() {
 		sleep 1
 		top_title
 		# Clear mouse buffers
-		while read -t 0.001 -n 10000 _; do :; done
+		while read -rt 0.001 -n 10000 _; do :; done
 	fi
 }
 
@@ -698,7 +709,7 @@ save_file() {
 				sleep 1
 				top_title
 				# Clear mouse buffers
-				while read -t 0.001 -n 10000 _; do :; done
+				while read -rt 0.001 -n 10000 _; do :; done
 				use_mouse 1
 				return
 			fi
@@ -712,7 +723,7 @@ save_file() {
 				sleep 1
 				top_title
 				# Clear mouse buffers
-				while read -t 0.001 -n 10000 _; do :; done
+				while read -rt 0.001 -n 10000 _; do :; done
 				use_mouse 1
 				return
 			fi
@@ -906,7 +917,7 @@ top_title() {
 	fi
 
 	# Clear mouse buffers
-    while read -t 0.001 -n 10000 _; do :; done
+    while read -rt 0.001 -n 10000 _; do :; done
     IS_DRAW=0
     use_mouse 1
 }
@@ -1018,7 +1029,7 @@ side_color() {
 			;;
 	esac
 	# Clear mouse buffers
-    while read -t 0.001 -n 10000 _; do :; done
+    while read -rt 0.001 -n 10000 _; do :; done
     IS_DRAW=0
     use_mouse 1
 }
@@ -1062,7 +1073,7 @@ bottom_bar() {
 	printf '\e[%d;2H%b' "$((CANVAS_MAX_LINES + 1))" "$MEM_USAGE_STR" >"$TTY_DEV"
 
 	# Clear mouse buffers
-    while read -t 0.001 -n 10000 _; do :; done
+    while read -rt 0.001 -n 10000 _; do :; done
     IS_DRAW=0
     use_mouse 1
 }
@@ -1141,7 +1152,7 @@ draw_paint() {
 		fi
 	done
 	# Clear mouse buffers
-    while read -t 0.001 -n 10000 _; do :; done
+    while read -rt 0.001 -n 10000 _; do :; done
     IS_DRAW=0
     use_mouse 1
 }
@@ -1153,7 +1164,7 @@ draw_ui() {
 	# Clear Screen
     printf '\e[2J' >"$TTY_DEV"
     # Clear mouse buffers
-    while read -t 0.001 -n 10000 _; do :; done
+    while read -rt 0.001 -n 10000 _; do :; done
     IS_DRAW=0
     use_mouse 1
 
@@ -1191,7 +1202,7 @@ use_mouse() {
 
 init_terminal() {
 	if [[ -n "$FILE_PATH" ]]; then
-		load_file $FILE_PATH
+		load_file "$FILE_PATH"
 		temp_name="${FILE_PATH##*/}"
 		NAME="${temp_name%%.*}"
 	fi
@@ -1587,10 +1598,10 @@ click_handler() {
 }
 
 get_mem_usage() {
-	local total_pages rss_pages page_size_kb=4
+	local _total_pages rss_pages page_size_kb=4
 	local rss_kb mb_whole mb_dec
 
-	if read -r total_pages rss_pages _ < /proc/self/statm 2>/dev/null; then
+	if read -r _total_pages rss_pages _ < /proc/self/statm 2>/dev/null; then
 		rss_kb=$(( rss_pages * page_size_kb ))
 
 		if [[ "$rss_kb" -ge 1024 ]]; then
