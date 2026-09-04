@@ -252,6 +252,21 @@ declare -A XTERM_COLOR_MAP=(
     [36]="0 205 205"	[46]="0 205 205"  	# Cyan
     [37]="229 229 229"	[47]="229 229 229"  # White
 )
+update_palette() {
+	# Get color palette
+	case "$COLOR_PALETTE_TYPE" in
+		1)	declare -n -g PALETTE_SELECT=GNOME_COLOR_MAP		;;
+		2)	declare -n -g PALETTE_SELECT=ALACRITTY_COLOR_MAP	;;
+		3)	declare -n -g PALETTE_SELECT=KONSOLE_COLOR_MAP		;;
+		4)	declare -n -g PALETTE_SELECT=WEZTERM_COLOR_MAP		;;
+		5)	declare -n -g PALETTE_SELECT=XFCE4_COLOR_MAP		;;
+		6)	declare -n -g PALETTE_SELECT=KITTY_COLOR_MAP		;;
+		7)	declare -n -g PALETTE_SELECT=ITERM2_COLOR_MAP		;;
+		8)	declare -n -g PALETTE_SELECT=NORD_COLOR_MAP			;;
+		9)	declare -n -g PALETTE_SELECT=XTERM_COLOR_MAP		;;
+		*)	declare -n -g PALETTE_SELECT=GNOME_COLOR_MAP		;; # Default
+	esac
+}
 
 check_mouse_support() {
 	if [[ -z "${TERM:-}" || "$TERM" == "dumb" ]]; then
@@ -303,28 +318,14 @@ ansi_to_rgba_bytes() {
 
     IFS=';' read -ra codes <<< "$raw"
 
-	# Select color palette
-	case "$COLOR_PALETTE_TYPE" in
-		1)	declare -n palette=GNOME_COLOR_MAP		;;
-		2)	declare -n palette=ALACRITTY_COLOR_MAP	;;
-		3)	declare -n palette=KONSOLE_COLOR_MAP	;;
-		4)	declare -n palette=WEZTERM_COLOR_MAP	;;
-		5)	declare -n palette=XFCE4_COLOR_MAP		;;
-		6)	declare -n palette=KITTY_COLOR_MAP		;;
-		7)	declare -n palette=ITERM2_COLOR_MAP		;;
-		8)	declare -n palette=NORD_COLOR_MAP		;;
-		9)	declare -n palette=XTERM_COLOR_MAP		;;
-		*)	declare -n palette=GNOME_COLOR_MAP		;; # Default
-	esac
-
 	local bg="0 0 0"
 	if [[ "${codes[0]}" -ne 0 ]]; then
-		bg="${palette[${codes[0]}]}"
+		bg="${PALETTE_SELECT[${codes[0]}]}"
 	fi
 
     local fg="0 0 0"
     if [[ -v codes[1] && "${codes[1]}" -ne 0 ]]; then
-        local fg="${palette[${codes[1]}]}"
+        local fg="${PALETTE_SELECT[${codes[1]}]}"
     fi
 
     # Set opacity
@@ -661,12 +662,13 @@ save_file() {
 	case "$type" in
 		bytes) # Save as .bin
 			{
-				printf 'TUI_STATE_V1\0%s\0%s\0' "$PAINT_ROW" "$PAINT_COL"
+				printf 'TUI_STATE_V1\0%s\0%s\0%s\0' "$PAINT_ROW" "$PAINT_COL" "$COLOR_PALETTE_TYPE"
 
 				for key in "${!PAINT_ITEMS[@]}"; do
 					printf '%s\0%s\0' "$key" "${PAINT_ITEMS[$key]}"
 				done
 			} > "${path}.bin"
+			EDIT=0
 			;;
 		pam) # Save as .pam
 			pam_generator > "${path}-${color_type}.pam"
@@ -714,7 +716,7 @@ save_file() {
 
 load_file() {
 	local path=$1
-	local magic row col key val
+	local magic row col palette key val
 
 	if [[ ! -f "$path" || ! -r "$path" ]]; then
 		printf 'Error: State file "%s" is unreadable or missing.\n' "$path" >&2
@@ -727,6 +729,7 @@ load_file() {
 	IFS= read -r -d '' magic <&3 || { exec 3<&-; return 1; }
 	IFS= read -r -d '' row <&3
 	IFS= read -r -d '' col <&3
+	IFS= read -r -d '' palette <&3
 
 	# Check Metadata
 	if [[ "$magic" != "TUI_STATE_V1" ]]; then
@@ -737,6 +740,7 @@ load_file() {
 
 	PAINT_ROW="$row"
 	PAINT_COL="$col"
+	COLOR_PALETTE_TYPE="$palette"
 
 	while IFS= read -r -d '' key <&3 && IFS= read -r -d '' val <&3; do
 		PAINT_ITEMS["$key"]="$val"
@@ -791,7 +795,8 @@ save_colors() {
 	local col=$2
 	local text=$3
 
-	PAINT_ITEMS["$row:$col"]="$text"
+	printf -v bin_val '%b' "$text"
+	PAINT_ITEMS["$row:$col"]="$bin_val"
 }
 
 init_bg() {
@@ -819,7 +824,7 @@ init_bg() {
 }
 
 top_title() {
-	rt="(Q)uit "
+	rt="(P)alette $COLOR_PALETTE_TYPE (Q)uit "
 	if [[ "$EDIT" -eq 1 ]]; then
 		cap=$((TERM_COLS - ${#rt} - 4))
 		lt=" ${NAME:0:$cap} * "
@@ -829,6 +834,55 @@ top_title() {
 	fi
 	lrw=$((TERM_COLS - ${#lt}))
 	printf '\e[1;1H\e[7m%b%*b\e[0m' "$lt" "$lrw" "$rt" >"$TTY_DEV"
+}
+
+rgb_converter() {
+	local raw_str="$1"
+	local row="$2"
+	local col="$3"
+	local bg=0 fg=0
+	# Extract color sequence
+	local color_seq="${raw_str#*$'\e['}"
+	color_seq="${color_seq%%m*}"
+
+	# Extract background, foreground and char
+	IFS=';' read -r -a codes <<< "$color_seq"
+	for c in "${codes[@]}"; do
+		if [[ "$c" =~ ^[0-9]+$ ]]; then
+			if [[ "$c" -ge 30 && "$c" -le 37 ]]; then
+				fg="$c"
+			elif [[ "$c" -ge 40 && "$c" -le 47 ]]; then
+				bg="$c"
+			fi
+		fi
+	done
+	local char="${raw_str#*m}"
+	char="${char%%$'\e'*}"
+
+	# Parse background to follow color palette
+	local new_raw=""
+	local bg_r=0 bg_g=0 bg_b=0
+	local fg_r=0 fg_g=0 fg_b=0
+	if [[ "$bg" -ne 0 ]]; then
+		IFS=' ' read -r -a bg_items <<< "${PALETTE_SELECT[$bg]}"
+		bg_r="${bg_items[0]}"
+		bg_g="${bg_items[1]}"
+		bg_b="${bg_items[2]}"
+		new_raw+="\e[48;2;${bg_r};${bg_g};${bg_b}m"
+	else
+		new_raw+="\e[0m"
+	fi
+	# Parse foreground to follow color palette
+	if [[ "$fg" -ne 0 ]]; then
+		IFS=' ' read -r -a fg_items <<< "${PALETTE_SELECT[$fg]}"
+		fg_r="${fg_items[0]}"
+		fg_g="${fg_items[1]}"
+		fg_b="${fg_items[2]}"
+		new_raw+="\e[38;2;${fg_r};${fg_g};${fg_b}m"
+	fi
+
+	printf '\e[%d;%dH%b' "$row" "$col" \
+		"${new_raw}${char}\e[0m" >"$TTY_DEV"
 }
 
 draw_paint() {
@@ -889,13 +943,15 @@ draw_paint() {
 			fi
 		done
     done
+
 	# Draw paint
 	for pos in "${!PAINT_ITEMS[@]}"; do
 		pos_r=$(( ${pos%%:*} + PAINT_OUTLINE_TOP ))
 		pos_c=$(( ${pos#*:} + PAINT_OUTLINE_LEFT ))
+		# Check if within canvas
 		if [[ "$pos_r" -le "$CANVAS_MAX_LINES" && "$pos_r" -ge 2 ]]; then
 			if [[ "$pos_c" -le "$CANVAS_MAX_COLS" && "$pos_c" -ge 1 ]]; then
-				printf '\e[%d;%dH%b' "$pos_r" "$pos_c" "${PAINT_ITEMS[$pos]}" >"$TTY_DEV"
+				rgb_converter "${PAINT_ITEMS[$pos]}" "$pos_r" "$pos_c"
 			fi
 		fi
 	done
@@ -1029,6 +1085,7 @@ draw_ui() {
 		printf '\e[%d;2H%b' "$((CANVAS_MAX_LINES + 1))" "$MEM_USAGE_STR" >"$TTY_DEV"
     else
 		MSG="Please resize to 34 by 13."
+		save_file "./$NAME" "bytes" # Save unsave by force
 		exit 1
     fi
 
@@ -1084,6 +1141,7 @@ init_terminal() {
 		init_bg
     fi
 
+    update_palette
     draw_ui
 }
 
@@ -1142,7 +1200,7 @@ draw_cursor() {
 		#Draw old
 		temp="$((CURSOR_ROW - PAINT_OUTLINE_TOP)):$((CURSOR_COL - PAINT_OUTLINE_LEFT))"
 		if [[ -v PAINT_ITEMS["$temp"] ]]; then
-			printf '\e[%d;%dH%b' "$CURSOR_ROW" "$CURSOR_COL" "${PAINT_ITEMS[$temp]}" >"$TTY_DEV"
+			rgb_converter "${PAINT_ITEMS[$temp]}" "$CURSOR_ROW" "$CURSOR_COL"
 		fi
 
 		#Draw new
@@ -1161,7 +1219,7 @@ paint_pixel() {
     # Skip paint UI areas
     #Skip if no move or outside canvas area
     if [[ "$row" -eq 1 ]]; then
-	return
+		return
     fi
     if [[ "$row" -ge "$((TERM_LINES - 1))" ]]; then
         return
@@ -1197,7 +1255,7 @@ paint_pixel() {
     esac
     #Select color
     case "$PAINT_COLOR" in
-		0)  char+=";0m" ;;
+		0)  char+="m"    ;;
         1)  char+=";30m" ;;
         2)  char+=";37m" ;;
         3)  char+=";31m" ;;
@@ -1231,7 +1289,7 @@ paint_pixel() {
     char+="\e[0m"
 
     save_colors "$(( row - PAINT_OUTLINE_TOP ))" "$(( col - PAINT_OUTLINE_LEFT ))" "$char"
-    printf '\e[%d;%dH%b' "$row" "$col" "$char" >"$TTY_DEV"
+    rgb_converter "$char" "$row" "$col"
 
     CURSOR_ROW=$row
     CURSOR_COL=$col
@@ -1479,7 +1537,6 @@ save_parse() {
 		temp_path="${FILE_PATH%%.*}"
 		save_file "$temp_path" "$type"
 	fi
-	EDIT=0
 	top_title
 }
 
@@ -1507,11 +1564,82 @@ main() {
 			CURSOR_COL=0
 		fi
 
-		#Read stdin and quit with 'q'
+		#Read stdin and quit with 'q', palette with 'p'
 		byte=""
 		IFS= LC_ALL=C read -r -t 0.01 -n 1 -d '' byte <"$TTY_DEV" || continue
 		if [[ "$byte" = "q" || "$byte" = "Q" ]]; then
-			break
+				if [[ "$EDIT" -eq 1 ]]; then
+					use_mouse 0
+					temp_col=$(( (TERM_COLS / 2) - 16 + 1 ))
+					printf '\e[1;%dH\e[43;30m[Quit without saving? (Y)es (N)o]\e[0m' "$temp_col" # Popup Position
+					is_exit=0
+					while true; do
+						read -r -s -n 1 key
+						case "${key,,}" in
+							y)
+								MSG="Quitting without saving..."
+								is_exit=1
+								break
+								;;
+							n)
+								break
+								;;
+							*)	;;
+						esac
+					done
+					top_title
+
+					if [[ "$is_exit" -eq 1 ]]; then break; fi
+					use_mouse 1
+				else
+					break
+				fi
+		fi
+		if [[ "$byte" = "p" || "$byte" = "P" ]]; then
+			use_mouse 0
+			temp_col=$(( (TERM_COLS / 2) - 11 + 1 ))
+			input_buffer="**"
+			while true; do
+				printf '\e[1;%dH\e[43;30m[ Color Palette [%s] ]\e[0m' "$temp_col" "${input_buffer: -2}" # Popup
+				read -r -s -n 1 key
+				case "$key" in
+					[0-9]) # Digits
+						if [[ "${#input_buffer}" -lt 4 ]]; then
+							input_buffer+="$key"
+						fi
+						;;
+					$'\x7f'|$'\x08') # Backspace
+						if [[ -n "$input_buffer" && "${#input_buffer}" -gt 2 ]]; then
+							input_buffer="${input_buffer%?}"
+						fi
+						;;
+					""|$'\r'|$'\n') # Enter key
+						strip="${input_buffer##*[^0-9]}"
+						num=$(( 10#${strip:-0} ))
+						case "$num" in
+							1)	COLOR_PALETTE_TYPE=1;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							2)	COLOR_PALETTE_TYPE=2;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							3)	COLOR_PALETTE_TYPE=3;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							4)	COLOR_PALETTE_TYPE=4;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							5)	COLOR_PALETTE_TYPE=5;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							6)	COLOR_PALETTE_TYPE=6;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							7)	COLOR_PALETTE_TYPE=7;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							8)	COLOR_PALETTE_TYPE=8;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							9)	COLOR_PALETTE_TYPE=9;	EDIT=1;	update_palette;	draw_ui;	break	;;
+							*) # None
+								printf '\e[1;%dH\e[41;30m[   Invalid Number   ]\e[0m' "$temp_col" # Popup
+								sleep 1
+								;;
+						esac
+						;;
+					p|P) # Cancel
+						break
+						;;
+					*)	;;
+				esac
+			done
+			top_title
+			use_mouse 1
 		fi
 
 		#Char escape
