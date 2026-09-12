@@ -1,17 +1,18 @@
 #!/bin/bash
 
 if [ "$EUID" -ne 0 ]; then
-  echo "[!] Please run this script with sudo: sudo ./setup_lpt_rules.sh"
+  echo "[!] Please run this script with sudo: sudo $0"
   exit 1
 fi
 
 PRINTER_NAME=""
+MODE=""
 COLS=$(tput cols)
 
 printf '%*s\n' "$COLS" '' | tr ' ' '='
 echo "CUPS USB-to-LPT Converter Patcher Script"
 printf '%*s\n' "$COLS" '' | tr ' ' '='
-echo "NOTE : This will set CUPS flags on printer and set USB timeout."
+echo "NOTE : This will set CUPS flags on printer and set USBPortTimeout."
 echo "WARNING : Only use if using USB-to-LPT Converter."
 echo "          If host PC have parallel port, connect printer on that instead."
 echo "Press 'Ctrl + C' to cancel."
@@ -22,21 +23,59 @@ while true; do
     echo "[*] Searching printer named '$PRINTER_NAME'..."
     if lpstat -p | grep -q "^printer $PRINTER_NAME "; then
         echo "[/] Found '$PRINTER_NAME'!"
-        echo "[*] Configure CUPS URI Flags for '$PRINTER_NAME'..."
-        lpadmin -p "$PRINTER_NAME" -o usb-unidir-default=true
-        lpadmin -p "$PRINTER_NAME" -o usb-no-reattach-default=true
-        lpadmin -p "$PRINTER_NAME" -o printer-op-policy=default
-        lpadmin -p "$PRINTER_NAME" -o wait-for-job=false
-        lpadmin -p "$PRINTER_NAME" -o print-is-bidi=false
-        lpadmin -p "$PRINTER_NAME" -o printer-error-policy=retry-job
-        echo "[/] Done configure CUPS URI Flags for '$PRINTER_NAME'."
-        if grep -q "^USBPortTimeout" /etc/cups/cupsd.conf; then
-            echo "[*] Modifying USBPortTimeout in CUPS config..."
-            sudo sed -i 's/^USBPortTimeout.*/USBPortTimeout 1/' /etc/cups/cupsd.conf 2>/dev/null
-        else
-            echo "[*] Adding USBPortTimeout in CUPS config..."
-            echo "USBPortTimeout 1" | sudo tee -a /etc/cups/cupsd.conf 2>/dev/null
-        fi
+
+        while true; do
+            printf '[ ]\n[-] Do you want to\n[-] 1. Configure CUPS flags and add USBPortTimeout\n[-] 2. Revert CUPS flags to default and remove USBPortTimeout\n[-] 3. Toggle USBPortTimeout (add or remove)\n[-] Default Option [1] : '
+            read -r MODE
+            if [ -z "${MODE// /}" ] || [ "$MODE" -eq 1 ]; then
+                echo "[ ]"
+                echo "[*] Configure CUPS URI Flags for '$PRINTER_NAME'..."
+                lpadmin -p "$PRINTER_NAME" -o usb-unidir-default=true
+                lpadmin -p "$PRINTER_NAME" -o usb-no-reattach-default=true
+                lpadmin -p "$PRINTER_NAME" -o printer-op-policy=default
+                lpadmin -p "$PRINTER_NAME" -o wait-for-job=false
+                lpadmin -p "$PRINTER_NAME" -o print-is-bidi=false
+                lpadmin -p "$PRINTER_NAME" -o printer-error-policy=retry-job
+                echo "[/] Done configure CUPS URI Flags for '$PRINTER_NAME'."
+                if grep -q "^USBPortTimeout" /etc/cups/cupsd.conf; then
+                    echo "[*] Modifying USBPortTimeout in CUPS config..."
+                    sudo sed -i 's/^USBPortTimeout.*/USBPortTimeout 1/' /etc/cups/cupsd.conf 2>/dev/null
+                else
+                    echo "[*] Adding USBPortTimeout in CUPS config..."
+                    echo "USBPortTimeout 1" | sudo tee -a /etc/cups/cupsd.conf > /dev/null
+                fi
+                break
+            elif [ "$MODE" -eq 2 ]; then
+                echo "[ ]"
+                echo "[*] Revert CUPS URI Flags for '$PRINTER_NAME'..."
+                lpadmin -p "$PRINTER_NAME" -R usb-unidir-default
+                lpadmin -p "$PRINTER_NAME" -R usb-no-reattach-default
+                lpadmin -p "$PRINTER_NAME" -R printer-op-policy
+                lpadmin -p "$PRINTER_NAME" -R wait-for-job
+                lpadmin -p "$PRINTER_NAME" -R print-is-bidi
+                lpadmin -p "$PRINTER_NAME" -R printer-error-policy
+                echo "[ ]"
+                echo "[/] Done revert CUPS URI Flags for '$PRINTER_NAME'."
+                if grep -q "^USBPortTimeout" /etc/cups/cupsd.conf; then
+                    echo "[*] Removing USBPortTimeout in CUPS config..."
+                    sudo sed -i '/^USBPortTimeout/d' /etc/cups/cupsd.conf 2>/dev/null
+                fi
+                break
+            elif [ "$MODE" -eq 3 ]; then
+                echo "[*] Checking USBPortTimeout in CUPS config..."
+                if grep -q "^USBPortTimeout" /etc/cups/cupsd.conf; then
+                    echo "[*] Removing USBPortTimeout in CUPS config..."
+                    sudo sed -i '/^USBPortTimeout/d' /etc/cups/cupsd.conf 2>/dev/null
+                else
+                    echo "[*] Adding USBPortTimeout in CUPS config..."
+                    echo "USBPortTimeout 1" | sudo tee -a /etc/cups/cupsd.conf > /dev/null
+                fi
+                break
+            else
+                echo "[X] Invalid input!"
+            fi
+        done
+
         echo "[*] Cancel any lingering backend locks..."
         cancel -a
         echo "[*] Enabling for '$PRINTER_NAME'..."
