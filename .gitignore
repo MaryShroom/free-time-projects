@@ -1,0 +1,45 @@
+# ==========================================
+# Virtual Environments (Any folder depth)
+# ==========================================
+**/.venv/
+**/venv/
+**/env/
+**/ENV/
+**/env.bak/
+**/venv.bak/
+
+# ==========================================
+# Python Byte-code & Cache
+# ==========================================
+**/__pycache__/
+**/*.py[cod]
+*$py.class
+**/.pytest_cache/
+**/.coverage
+
+# ==========================================
+# PyInstaller & Build Outputs
+# ==========================================
+**/build/
+**/dist/
+**/*.spec
+
+# ==========================================
+# Debian Packaging (.deb) Artifacts
+# ==========================================
+**/*.deb
+**/*.changes
+**/*.build
+**/*.buildinfo
+**/debian/.debhelper/
+**/debian/files/
+**/debian/debhelper-build-stamp
+
+# ==========================================
+# IDEs & System Files
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
