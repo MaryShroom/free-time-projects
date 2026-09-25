@@ -108,6 +108,8 @@ class ConfigHandler:
     def __init__(self):
         # Default value for printers' JSON
         self._default_data = {
+            "webhook_url": "",
+            "bearer_token": "",
             "notify_times": ["08:00:00", "20:00:00"],
             "timer_minutes": 30,
             "printers": {}
@@ -150,6 +152,14 @@ class ConfigHandler:
                 json.dump(self.data, file, indent=4)
         except OSError as e:
             sys.stderr.write(f"Error writing file '{self.printers_json}': {e}\n")
+
+    def set_webhook(self, webhook_url, token):
+        self.data["webhook_url"] = str(webhook_url)
+        self.data["bearer_token"] = str(token)
+        return True
+
+    def get_webhook(self):
+        return [self.data["webhook_url"], self.data["bearer_token"]]
 
     def set_notify_times(self, notify_times=["08:00:00", "20:00:00"]):
         self.data["notify_times"] = notify_time
@@ -253,12 +263,67 @@ class ConfigHandler:
     def get_printer(self, ip):
         return self.data.get("printers", {}).get(ip, {})
 
+    def get_printers_array(self):
+        printer_array = {"printers": []}
+        for printer, details in self.data.get("printers", {}).items():
+            printer_dict = {"ip": printer}
+            printer_dict.update(details)
+            printer_dict.get("supplies")["toner_level"] = str(printer_dict.get("supplies").get("toner_level"))
+            printer_dict.get("supplies")["image_level"] = str(printer_dict.get("supplies").get("image_level"))
+            printer_dict.get("supplies")["maint_level"] = str(printer_dict.get("supplies").get("maint_level"))
+            printer_dict.get("supplies")["bottle_level"] = str(printer_dict.get("supplies").get("bottle_level"))
+            printer_array["printers"].append(printer_dict)
+        return printer_array
+
     def set_availability(self, ip, value):
         self.data["printers"][ip]["available"] = value
         return True
 
     def get_availability(self, ip):
         return self.data["printers"][ip]["available"]
+
+class WebhookClient:
+    def __init__(self, url: str = "", token: str = ""):
+        self.url = url
+        self.token = token
+
+    def set_credentials(self, url: str, token: str):
+        self.url = url
+        self.token = token
+
+    def _get_headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+
+    def send_sync(self, payload: dict, timeout: int = 5) -> tuple[bool, str]:
+        if not self.url:
+            return False, "Webhook URL is missing."
+
+        try:
+            response = requests.post(
+                self.url,
+                json=payload,
+                headers=self._get_headers(),
+                timeout=timeout
+            )
+            response.raise_for_status()
+            return True, f"Status {response.status_code}: {response.text}"
+        except requests.exceptions.HTTPError as err:
+            return False, f"HTTP Error ({response.status_code}): {err}"
+        except requests.exceptions.RequestException as err:
+            return False, f"Network Error: {err}"
+
+    def send_async(self, payload: dict, on_success=None, on_failure=None, timeout: int = 5):
+        def _worker():
+            success, message = self.send_sync(payload, timeout=timeout)
+            if success and on_success:
+                on_success(message)
+            elif not success and on_failure:
+                on_failure(message)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
 class PrinterStatusHandler():
     def __init__(self, protocol, ip, endpoint):
@@ -694,9 +759,9 @@ class ListRowObject:
 
         # Update Available Status
         if self.printer_items["available"]:
-            self.ip_fg = "#00F000"
+            self.ip_fg = "#008F00"
         else:
-            self.ip_fg = "#F00000"
+            self.ip_fg = "#8F0000"
 
         # Update new data
         self.ip_label.config(text=self.printer_items["ip"], fg=self.ip_fg)
@@ -1084,6 +1149,153 @@ class AddDialog(tk.Toplevel):
         y = p_y + (p_h // 2) - (h // 2)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
+class SettingUI(tk.Toplevel):
+    def __init__(self, parent, timer, webhook):
+        super().__init__(parent)
+        self.parent = parent
+        self.result = None
+
+        self.title("Settings")
+        self.configure(bg="#F0F0F0")
+        self.geometry("350x150")
+        self.minsize(350, 150)
+        self.resizable(False, False)
+
+        self.withdraw()
+
+        self._timer = timer
+        self._webhook = webhook
+        self._build_ui()
+        self._show_modal()
+
+    def _build_ui(self):
+        frame = tk.Canvas(self, bg="#F0F0F0")
+        frame.pack(fill="both", expand=True)
+
+        # Timer dropdown
+        self.timer_values = [5, 10, 20, 30, 60, 90, 120, 180, 240, 300, 360]
+        self.timer_select = ttk.Combobox(
+            frame,
+            values=self.timer_values,
+            state="readonly",
+            width=3
+        )
+        frame.create_window(10, 10, window=self.timer_select, anchor="nw")
+        if self._timer in self.timer_values:
+            self.timer_select.set(self._timer)
+        else:
+            self.timer_select.set(30)
+        timer_label = tk.Label(frame, text="minutes timer", bg="#F0F0F0")
+        frame.create_window(60, 10, window=timer_label, anchor="nw")
+
+        webhook_label = tk.Label(
+            frame,
+            text="Webhook URL : ",
+            fg="#000000",
+            bg="#F0F0F0",
+            font=("Monospace", 10)
+        )
+        frame.create_window(10, 40, window=webhook_label, anchor="nw")
+
+        self.url_entry = tk.Entry(
+            frame,
+            width=30,
+            bg="#F0F0F0",
+            fg="#000000",
+            insertbackground="#F0F0F0",
+            bd=1
+        )
+        self.url_entry.insert(0, self._webhook[0])
+        frame.create_window(120, 40, window=self.url_entry, anchor="nw", width=216)
+
+        token_label = tk.Label(
+            frame,
+            text="Token URL : ",
+            fg="#000000",
+            bg="#F0F0F0",
+            font=("Monospace", 10)
+        )
+        frame.create_window(10, 70, window=token_label, anchor="nw")
+
+        self.token_entry = tk.Entry(
+            frame,
+            width=30,
+            bg="#F0F0F0",
+            fg="#000000",
+            insertbackground="#F0F0F0",
+            bd=1
+        )
+        self.token_entry.insert(0, self._webhook[1])
+        frame.create_window(120, 70, window=self.token_entry, anchor="nw", width=216)
+
+        save_btn = tk.Button(
+            frame,
+            text="Save & Close",
+            command=self._on_save,
+            bg="#9090F0",
+            fg="#000000",
+            activebackground="#A0A0F0",
+            activeforeground="#000000",
+            relief="flat",
+            padx=5,
+            pady=5,
+        )
+        save_btn.pack(side="bottom", anchor="se", padx=10, pady=10)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _show_modal(self):
+        self.transient(self.parent)
+        self.parent.update_idletasks()
+        self.update_idletasks()
+
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
+        x = self.parent.winfo_rootx() + (self.parent.winfo_width() // 2) - (w // 2)
+        y = self.parent.winfo_rooty() + (self.parent.winfo_height() // 2) - (h // 2)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self.deiconify()
+        self.update()
+        self.grab_set()
+        self.wait_window()
+
+    def _on_save(self):
+        timer = self.timer_select.get()
+        webhook_url = self.url_entry.get()
+        bearer_token = self.token_entry.get()
+        self.result = {
+            "timer": timer,
+            "webhook_url": webhook_url,
+            "token": bearer_token
+        }
+        self._on_close()
+
+    def _on_close(self):
+        self.grab_release()
+        self.destroy()
+
+class StatusWindow:
+    def __init__(self, parent, message):
+        self.top = tk.Toplevel(parent)
+        self.top.overrideredirect(True)
+        self.top.attributes("-topmost", True)
+
+        frame = tk.Frame(self.top, bg="#F0F0F0", relief="solid", bd=1)
+        frame.pack(fill="both", expand=True)
+
+        label = tk.Label(frame, text=message, font=("Monospace", 11), bg="#F0F0F0", padx=30, pady=20)
+        label.pack()
+
+        parent.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - 100
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - 30
+        self.top.geometry(f"+{x}+{y}")
+        self.top.update()
+
+    def close(self, delay_ms=100):
+        self.top.after(delay_ms, self.top.destroy)
+
 class TrayApp:
     def __init__(self):
         # Class Global Variables
@@ -1091,6 +1303,9 @@ class TrayApp:
         # Config Handler
         self.storage = ConfigHandler()
         self.first_init = True
+
+        # Webhook
+        self.webhook = WebhookClient(self.storage.get_webhook()[0], self.storage.get_webhook()[1])
 
         # Tkinker
         self.root = tk.Tk()
@@ -1163,23 +1378,9 @@ class TrayApp:
         tk.Button(self.btn_frame, text="Add Printer", relief="flat", command=self.add_button_click).pack(side="right", padx=5)
         tk.Button(self.btn_frame, text="Refresh", relief="flat", command=self.refresh_button_click).pack(side="right", padx=5)
 
-        # Timer dropdown
-        self.timer_values = [5, 10, 20, 30, 60, 90, 120]
-        self.timer_frame = tk.Frame(self.root, bg="#F0F0F0")
-        self.timer_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        self.timer_select = ttk.Combobox(
-            self.timer_frame,
-            values=self.timer_values,
-            state="readonly",
-            width=3
-        )
-        self.timer_select.pack(side="left", padx=5)
-        if self.storage.get_timer() in self.timer_values:
-            self.timer_select.set(self.storage.get_timer())
-        else:
-            self.timer_select.set(30)
-        tk.Label(self.timer_frame, text="minutes timer", bg="#F0F0F0").pack(side="left")
-        self.timer_select.bind("<<ComboboxSelected>>", self._on_select)
+        self.setting_frame = tk.Frame(self.root, bg="#F0F0F0")
+        self.setting_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        tk.Button(self.setting_frame, text="Settings", relief="flat", command=self.setting_button_click).pack(side="left", padx=5)
 
         # Tray events
         self.current_status = "default"
@@ -1312,6 +1513,20 @@ class TrayApp:
             self.storage.update_to_file()
             printer.update_inside(items, supplies)
 
+        # Webhook
+        self._webhook_refresh()
+        # Update
+        self.update_status()
+
+    # Setting button handler
+    def setting_button_click(self):
+        new_settings = SettingUI(self.root, self.storage.get_timer(), self.storage.get_webhook())
+        if new_settings.result is not None:
+            self.storage.set_timer(new_settings.result["timer"])
+            self.storage.set_webhook(new_settings.result["webhook_url"], new_settings.result["token"])
+            self.webhook.set_credentials(new_settings.result["webhook_url"], new_settings.result["token"])
+            self.storage.update_to_file()
+
     # Config button handler
     def config_button_click(self, printer_obj):
         printer_items = printer_obj.printer_items
@@ -1367,6 +1582,7 @@ class TrayApp:
         current_time = now.strftime("%H:%M:%S")
 
         if current_time in self.storage.get_notify_times():
+            self.refresh_button_click()
             self.update_status()
 
         self.root.after(1000, self._check_time_and_update)
@@ -1417,8 +1633,31 @@ class TrayApp:
             self.storage.update_to_file()
             # Update to list
             self.add_item(items, supplies)
+
+        # Webhook
+        self._webhook_refresh()
         # Update tray status
         self.update_status()
+
+    def _webhook_refresh(self):
+        status = StatusWindow(self.root, "Syncing...")
+
+        def task():
+            success, message = self.webhook.send_sync(payload=self.storage.get_printers_array())
+            if success:
+                self._webhook_success(message)
+            elif not success:
+                self._webhook_failure(message)
+
+            status.close(delay_ms=500)
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _webhook_success(self, msg):
+        sys.stdout.write(f"POST Success : {msg}\n")
+
+    def _webhook_failure(self, er):
+        sys.stderr.write(f"POST Failed : {er}\n")
 
     def _on_select(self, event):
         selected = self.timer_select.get()
@@ -1515,6 +1754,7 @@ class TrayApp:
             details = self.storage.get_printers()[printer]["supplies"]
             for supply, value in details.items():
                 if isinstance(details[supply], (int, float)):
+                    sys.stdout.write(f"asdasd {value}\n")
                     if value < min_values:
                         min_values = value
                     if value <= 20:
@@ -1529,13 +1769,16 @@ class TrayApp:
                                 message = "Waste Toner Bottle"
                             case _:
                                 message = "None"
-
-                        if value <= 5:
+                        if value == 0:
+                            notify_urgent(f"{printer} - Replace {message}", f"CRITICAL - Replace {message} for printer '{printer}', {value}% left.")
+                        elif value <= 5:
                             notify_urgent(f"{printer} - Low {message}", f"CRITICAL - Low {message} for printer '{printer}', {value}% left.")
                         else:
                             notify_normal(f"{printer} - Low {message}", f"Low {message} for printer '{printer}', {value}% left.")
 
-        if min_values <= 5:
+        if min_values == 0:
+            supplies_status = "critical"
+        elif min_values <= 5:
             supplies_status = "critical"
         elif min_values <= 20:
             supplies_status = "warning"
