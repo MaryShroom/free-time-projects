@@ -307,7 +307,7 @@ fetch_payload() {
 
                 sup_install["$desc"]=$(printf '%04d-%02d-%02d %02d:%02d:%02d' "$year" "$month" "$day" "$hour" "$minute" "$second")
             else
-                sup_install["$desc"]="$install_date"
+                sup_install["$desc"]="1970-01-01 00:00:00"
             fi
 
             # Supplies serial number
@@ -332,7 +332,7 @@ fetch_payload() {
         if [[ -v sup_install['Black Cartridge'] ]]; then
             sup_toner_install="${sup_install['Black Cartridge']}"
         else
-            sup_toner_install=""
+            sup_toner_install="1970-01-01 00:00:00"
         fi
 
         # Imaging Unit
@@ -357,7 +357,7 @@ fetch_payload() {
         elif [[ -v sup_install["Black Imaging Unit"] ]]; then
             sup_image_install="${sup_install['Black Imaging Unit']}"
         else
-            sup_image_install=""
+            sup_image_install="1970-01-01 00:00:00"
         fi
 
         # Maintenance Kit
@@ -376,7 +376,7 @@ fetch_payload() {
         if [[ -v sup_install["Maintenance Kit"] ]]; then
             sup_maint_install="${sup_install['Maintenance Kit']}"
         else
-            sup_maint_install=""
+            sup_maint_install="1970-01-01 00:00:00"
         fi
 
         # Waste Toner Bottle
@@ -395,7 +395,7 @@ fetch_payload() {
         if [[ -v sup_install["Waste Toner Bottle"] ]]; then
             sup_bottle_install="${sup_install['Waste Toner Bottle']}"
         else
-            sup_bottle_install=""
+            sup_bottle_install="1970-01-01 00:00:00"
         fi
 
     else
@@ -414,10 +414,10 @@ fetch_payload() {
             sup_maint_sn=$(jq -r '(.maint_sn // "")' "$history_file")
             sup_bottle_sn=$(jq -r '(.bottle_sn // "")' "$history_file")
 
-            sup_toner_install=$(jq -r '(.toner_install // "")' "$history_file")
-            sup_image_install=$(jq -r '(.image_install // "")' "$history_file")
-            sup_maint_install=$(jq -r '(.maint_install // "")' "$history_file")
-            sup_bottle_install=$(jq -r '(.bottle_install // "")' "$history_file")
+            sup_toner_install=$(jq -r '(.toner_install // "1970-01-01 00:00:00")' "$history_file")
+            sup_image_install=$(jq -r '(.image_install // "1970-01-01 00:00:00")' "$history_file")
+            sup_maint_install=$(jq -r '(.maint_install // "1970-01-01 00:00:00")' "$history_file")
+            sup_bottle_install=$(jq -r '(.bottle_install // "1970-01-01 00:00:00")' "$history_file")
         else
             print_console "warn" "History file for ${ip} does not exists. Create new history file..."
             dev_serial="Unknown"
@@ -432,10 +432,10 @@ fetch_payload() {
             sup_maint_sn=""
             sup_bottle_sn=""
 
-            sup_toner_install=""
-            sup_image_install=""
-            sup_maint_install=""
-            sup_bottle_install=""
+            sup_toner_install="1970-01-01 00:00:00"
+            sup_image_install="1970-01-01 00:00:00"
+            sup_maint_install="1970-01-01 00:00:00"
+            sup_bottle_install="1970-01-01 00:00:00"
         fi
     fi
 
