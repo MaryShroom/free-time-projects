@@ -31,7 +31,8 @@ CLI_SEND=false
 # Helper
 usage() {
     cat <<EOF
-Usage: ${SCRIPT_NAME} [OPTIONS]
+Must run as sudoer.
+Usage: sudo ${SCRIPT_NAME} [OPTIONS]
 
 Options:
   -w URL        Webhook URL to POST data to (Printer Supplies)
@@ -51,6 +52,11 @@ EOF
 
 # If no arguments, show help
 if [[ "$#" -eq 0 ]]; then
+    usage
+fi
+
+# If not sudoer, kick
+if [[ $EUID -ne 0 ]]; then
     usage
 fi
 
@@ -220,6 +226,8 @@ fetch_payload() {
     local is_online="Offline"
 
     local dev_serial sup_toner_lvl sup_image_lvl sup_maint_lvl sup_bottle_lvl
+    local sup_toner_sn sup_image_sn sup_maint_sn sup_bottle_sn
+    local sup_toner_install sup_image_install sup_maint_install sup_bottle_install
 
     print_console "info" "Fetching SNMP datas from ${ip}..."
 
@@ -230,13 +238,17 @@ fetch_payload() {
 
     # Fetch supplies
     declare -A supplies
-    local raw_desc raw_maxs raw_currs
+    declare -A sup_sn
+    declare -A sup_install
+    local raw_desc raw_maxs raw_currs raw_sn raw_install
     raw_desc=$(snmpbulkwalk -v2c -c "$community" -t 5 -r 0 -O qv "$ip" .1.3.6.1.4.1.641.6.4.4.2.1.5.1 2>/dev/null || true)
     raw_maxs=$(snmpbulkwalk -v2c -c "$community" -t 5 -r 0 -O qv "$ip" .1.3.6.1.4.1.641.6.4.4.1.1.14.1 2>/dev/null || true)
     raw_currs=$(snmpbulkwalk -v2c -c "$community" -t 5 -r 0 -O qv "$ip" .1.3.6.1.4.1.641.6.4.4.1.1.16.1 2>/dev/null || true)
+    raw_sn=$(snmpbulkwalk -v2c -c "$community" -t 5 -r 0 -O qv "$ip" .1.3.6.1.4.1.641.6.4.4.1.1.6 2>/dev/null || true)
+    raw_install=$(snmpbulkwalk -v2c -c "$community" -t 5 -r 0 -O qv "$ip" .1.3.6.1.4.1.641.6.4.4.1.1.10 2>/dev/null || true)
 
     # Check if SNMP successfully fetched datas
-    if [[ -n "$raw_serial" ]] && [[ -n "$raw_desc" ]] && [[ -n "$raw_maxs" ]] && [[ -n "$raw_currs" ]]; then
+    if [[ -n "$raw_serial" ]] && [[ -n "$raw_desc" ]] && [[ -n "$raw_maxs" ]] && [[ -n "$raw_currs" ]] && [[ -n "$raw_sn" ]] && [[ -n "$raw_install" ]]; then
         # Printer details
         dev_serial="${raw_serial:-Unknown}"
 
@@ -250,16 +262,25 @@ fetch_payload() {
         mapfile -t desc_arr <<< "$raw_desc"
         mapfile -t maxs_arr <<< "$raw_maxs"
         mapfile -t currs_arr <<< "$raw_currs"
+        mapfile -t sn_arr <<< "$raw_sn"
+        mapfile -t install_arr <<< "$raw_install"
 
         for i in "${!desc_arr[@]}"; do
             desc="${desc_arr[$i]:-}"
             max="${maxs_arr[$i]:-0}"
             curr="${currs_arr[$i]:--2}"
+            sn="${sn_arr[$i]:-}"
+            install_date="${install_arr[$i]:-}"
 
             # Clean description
             desc="${desc//[\"\\]/}"
             desc="${desc//$'\t'/ }"
             desc=$(echo "$desc" | xargs)
+
+            # Clean install date
+            install_date="${install_date//[\"\\]/}"
+            install_date="${install_date//$'\t'/ }"
+            install_date=$(echo "$install_date" | xargs)
 
             # Clean numeric
             max="${max//[^0-9-]/}"
@@ -273,6 +294,26 @@ fetch_payload() {
             else
                 supplies["$desc"]="${curr}"
             fi
+
+            # Convert Hex to Timestamp
+            read -r y1 y2 m d h min s rest <<< "$install_date"
+            if [[ -n "$y1" ]] && [[ -n "$y2" ]]; then
+                year=$(( 0x$y1 * 256 + 0x$y2 ))
+                month=$(( 0x$m ))
+                day=$(( 0x$d ))
+                hour=$(( 0x$h ))
+                minute=$(( 0x$min ))
+                second=$(( 0x$s ))
+
+                sup_install["$desc"]=$(printf '%04d-%02d-%02d %02d:%02d:%02d' "$year" "$month" "$day" "$hour" "$minute" "$second")
+            else
+                sup_install["$desc"]="$install_date"
+            fi
+
+            # Supplies serial number
+            sn="${sn//[\"\\]/}"
+            sn="${sn//$'\t'/ }"
+            sup_sn["$desc"]=$(echo "$sn" | xargs)
         done
 
         # Black Toner
@@ -280,6 +321,18 @@ fetch_payload() {
             sup_toner_lvl="${supplies['Black Cartridge']}"
         else
             sup_toner_lvl="-4"
+        fi
+
+        if [[ -v sup_sn['Black Cartridge'] ]]; then
+            sup_toner_sn="${sup_sn['Black Cartridge']}"
+        else
+            sup_toner_sn=""
+        fi
+
+        if [[ -v sup_install['Black Cartridge'] ]]; then
+            sup_toner_install="${sup_install['Black Cartridge']}"
+        else
+            sup_toner_install=""
         fi
 
         # Imaging Unit
@@ -291,11 +344,39 @@ fetch_payload() {
             sup_image_lvl="-4"
         fi
 
+        if [[ -v sup_sn["Imaging Unit"] ]]; then
+            sup_image_sn="${sup_sn['Imaging Unit']}"
+        elif [[ -v sup_sn["Black Imaging Unit"] ]]; then
+            sup_image_sn="${sup_sn['Black Imaging Unit']}"
+        else
+            sup_image_sn=""
+        fi
+
+        if [[ -v sup_install["Imaging Unit"] ]]; then
+            sup_image_install="${sup_install['Imaging Unit']}"
+        elif [[ -v sup_install["Black Imaging Unit"] ]]; then
+            sup_image_install="${sup_install['Black Imaging Unit']}"
+        else
+            sup_image_install=""
+        fi
+
         # Maintenance Kit
         if [[ -v supplies["Maintenance Kit"] ]]; then
             sup_maint_lvl="${supplies['Maintenance Kit']}"
         else
             sup_maint_lvl="-4"
+        fi
+
+        if [[ -v sup_sn["Maintenance Kit"] ]]; then
+            sup_maint_sn="${sup_sn['Maintenance Kit']}"
+        else
+            sup_maint_sn=""
+        fi
+
+        if [[ -v sup_install["Maintenance Kit"] ]]; then
+            sup_maint_install="${sup_install['Maintenance Kit']}"
+        else
+            sup_maint_install=""
         fi
 
         # Waste Toner Bottle
@@ -304,6 +385,19 @@ fetch_payload() {
         else
             sup_bottle_lvl="-4"
         fi
+
+        if [[ -v sup_sn["Waste Toner Bottle"] ]]; then
+            sup_bottle_sn="${sup_sn['Waste Toner Bottle']}"
+        else
+            sup_bottle_sn=""
+        fi
+
+        if [[ -v sup_install["Waste Toner Bottle"] ]]; then
+            sup_bottle_install="${sup_install['Waste Toner Bottle']}"
+        else
+            sup_bottle_install=""
+        fi
+
     else
     # If fetch failed (offline, unavailable), get history file
         print_console "warn" "Unable to fetch SNMP datas from ${ip}. Fallback to history file..."
@@ -314,6 +408,16 @@ fetch_payload() {
             sup_image_lvl=$(jq -r '(.image_level // -4)' "$history_file")
             sup_maint_lvl=$(jq -r '(.maint_level // -4)' "$history_file")
             sup_bottle_lvl=$(jq -r '(.bottle_level // -4)' "$history_file")
+
+            sup_toner_sn=$(jq -r '(.toner_sn // "")' "$history_file")
+            sup_image_sn=$(jq -r '(.image_sn // "")' "$history_file")
+            sup_maint_sn=$(jq -r '(.maint_sn // "")' "$history_file")
+            sup_bottle_sn=$(jq -r '(.bottle_sn // "")' "$history_file")
+
+            sup_toner_install=$(jq -r '(.toner_install // "")' "$history_file")
+            sup_image_install=$(jq -r '(.image_install // "")' "$history_file")
+            sup_maint_install=$(jq -r '(.maint_install // "")' "$history_file")
+            sup_bottle_install=$(jq -r '(.bottle_install // "")' "$history_file")
         else
             print_console "warn" "History file for ${ip} does not exists. Create new history file..."
             dev_serial="Unknown"
@@ -322,6 +426,16 @@ fetch_payload() {
             sup_image_lvl="-4"
             sup_maint_lvl="-4"
             sup_bottle_lvl="-4"
+
+            sup_toner_sn=""
+            sup_image_sn=""
+            sup_maint_sn=""
+            sup_bottle_sn=""
+
+            sup_toner_install=""
+            sup_image_install=""
+            sup_maint_install=""
+            sup_bottle_install=""
         fi
     fi
 
@@ -335,14 +449,30 @@ fetch_payload() {
         --arg image "$sup_image_lvl" \
         --arg maint "$sup_maint_lvl" \
         --arg bottle "$sup_bottle_lvl" \
+        --arg toner_sn "$sup_toner_sn" \
+        --arg image_sn "$sup_image_sn" \
+        --arg maint_sn "$sup_maint_sn" \
+        --arg bottle_sn "$sup_bottle_sn" \
+        --arg toner_install "$sup_toner_install" \
+        --arg image_install "$sup_image_install" \
+        --arg maint_install "$sup_maint_install" \
+        --arg bottle_install "$sup_bottle_install" \
         --arg online "$is_online" '{
             "timestamp": $timestamp,
             "ip": $ip,
             "serial": $serial,
             "toner_level": $toner,
+            "toner_sn": $toner_sn,
+            "toner_install": $toner_install,
             "image_level": $image,
+            "image_sn": $image_sn,
+            "image_install": $image_install,
             "maint_level": $maint,
+            "maint_sn": $maint_sn,
+            "maint_install": $maint_install,
             "bottle_level": $bottle,
+            "bottle_sn": $bottle_sn,
+            "bottle_install": $bottle_install,
             "available": $online
         }'
 }

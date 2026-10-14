@@ -31,6 +31,7 @@ CLI_SEND=false
 # Helper
 usage() {
     cat <<EOF
+Must run as sudoer.
 Usage: ${SCRIPT_NAME} [OPTIONS]
 
 Options:
@@ -51,6 +52,11 @@ EOF
 
 # If no arguments, show help
 if [[ "$#" -eq 0 ]]; then
+    usage
+fi
+
+# If not sudoer, kick
+if [[ $EUID -ne 0 ]]; then
     usage
 fi
 
