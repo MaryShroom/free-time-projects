@@ -225,7 +225,7 @@ fetch_payload() {
     local history_file="$3"
     local is_online="Offline"
 
-    local dev_serial sup_toner_lvl sup_image_lvl sup_maint_lvl sup_bottle_lvl
+    local dev_serial dev_printer_install sup_toner_lvl sup_image_lvl sup_maint_lvl sup_bottle_lvl
     local sup_toner_sn sup_image_sn sup_maint_sn sup_bottle_sn
     local sup_toner_install sup_image_install sup_maint_install sup_bottle_install
 
@@ -233,8 +233,9 @@ fetch_payload() {
 
     # Using Lexmark OIDs
     # Fetch Serial number
-    local raw_serial
+    local raw_serial raw_printer_install
     raw_serial=$(snmpget -v2c -c "$community" -t 5 -r 0 -O qv "$ip" .1.3.6.1.4.1.641.6.2.3.1.5.1 2>/dev/null || true)
+    raw_printer_install=$(snmpget -v2c -c "$community" -t 5 -r 0 -O qv "$ip" .1.3.6.1.4.1.641.6.2.3.1.7.1 2>/dev/null || true)
 
     # Fetch supplies
     declare -A supplies
@@ -251,12 +252,28 @@ fetch_payload() {
     if [[ -n "$raw_serial" ]] && [[ -n "$raw_desc" ]] && [[ -n "$raw_maxs" ]] && [[ -n "$raw_currs" ]] && [[ -n "$raw_sn" ]] && [[ -n "$raw_install" ]]; then
         # Printer details
         dev_serial="${raw_serial:-Unknown}"
+        dev_printer_install="${raw_printer_install:-07 B2 01 01 00 00 00 00 2B 00 00}"
 
         # Cleanup
         dev_serial="${dev_serial//\"/}"
+        dev_printer_install="${dev_printer_install//\"/}"
 
         # Set online
         is_online="Online"
+
+        read -r y1 y2 m d h min s rest <<< "$dev_printer_install"
+        if [[ -n "$y1" ]] && [[ -n "$y2" ]]; then
+            year=$(( 0x$y1 * 256 + 0x$y2 ))
+            month=$(( 0x$m ))
+            day=$(( 0x$d ))
+            hour=$(( 0x$h ))
+            minute=$(( 0x$min ))
+            second=$(( 0x$s ))
+
+            dev_printer_install=$(printf '%04d-%02d-%02d %02d:%02d:%02d' "$year" "$month" "$day" "$hour" "$minute" "$second")
+        else
+            dev_printer_install="1970-01-01 00:00:00"
+        fi
 
         # Printer supplies
         mapfile -t desc_arr <<< "$raw_desc"
@@ -307,7 +324,7 @@ fetch_payload() {
 
                 sup_install["$desc"]=$(printf '%04d-%02d-%02d %02d:%02d:%02d' "$year" "$month" "$day" "$hour" "$minute" "$second")
             else
-                sup_install["$desc"]="1970-01-01 00:00:00"
+                sup_install["$desc"]="$dev_printer_install"
             fi
 
             # Supplies serial number
@@ -332,7 +349,7 @@ fetch_payload() {
         if [[ -v sup_install['Black Cartridge'] ]]; then
             sup_toner_install="${sup_install['Black Cartridge']}"
         else
-            sup_toner_install="1970-01-01 00:00:00"
+            sup_toner_install="$dev_printer_install"
         fi
 
         # Imaging Unit
@@ -357,7 +374,7 @@ fetch_payload() {
         elif [[ -v sup_install["Black Imaging Unit"] ]]; then
             sup_image_install="${sup_install['Black Imaging Unit']}"
         else
-            sup_image_install="1970-01-01 00:00:00"
+            sup_image_install="$dev_printer_install"
         fi
 
         # Maintenance Kit
@@ -376,7 +393,7 @@ fetch_payload() {
         if [[ -v sup_install["Maintenance Kit"] ]]; then
             sup_maint_install="${sup_install['Maintenance Kit']}"
         else
-            sup_maint_install="1970-01-01 00:00:00"
+            sup_maint_install="$dev_printer_install"
         fi
 
         # Waste Toner Bottle
@@ -395,7 +412,7 @@ fetch_payload() {
         if [[ -v sup_install["Waste Toner Bottle"] ]]; then
             sup_bottle_install="${sup_install['Waste Toner Bottle']}"
         else
-            sup_bottle_install="1970-01-01 00:00:00"
+            sup_bottle_install="$dev_printer_install"
         fi
 
     else
