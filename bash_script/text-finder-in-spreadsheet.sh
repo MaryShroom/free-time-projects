@@ -77,7 +77,7 @@ echo "Text to find  : $FIND_TEXT"
 TEMPDIR=$(mktemp -d)
 
 # Convert spreadsheet to temp csv
-soffice --headless \
+soffice -env:UserInstallation="file://$TEMPDIR/profile" --headless \
     --convert-to 'csv:Text - txt - csv (StarCalc):9,34,76,1,,0,false,true,false,false,false,-1' \
     --outdir "$TEMPDIR" "$SS_PATH" >/dev/null
 
