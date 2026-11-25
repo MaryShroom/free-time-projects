@@ -12,7 +12,8 @@ FIND_TEXT=""
 TEMPDIR=""
 
 cleanup() {
-    [[ -n "${TEMPDIR:-}" && -d "$TEMPDIR" ]] && rm -rf "$TEMPDIR";
+    [[ -n "${TEMPDIR:-}" && -d "$TEMPDIR" ]] && rm -rf -- "$TEMPDIR"
+    return 0
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -77,7 +78,7 @@ TEMPDIR=$(mktemp -d)
 
 # Convert spreadsheet to temp csv
 soffice --headless \
-    --convert-to 'csv:Text - txt - csv (StarCalc):44,34,76,1,,0,false,true,false,false,false,-1' \
+    --convert-to 'csv:Text - txt - csv (StarCalc):9,34,76,1,,0,false,true,false,false,false,-1' \
     --outdir "$TEMPDIR" "$SS_PATH" >/dev/null
 
 # Check if at least one matching .csv file exists
@@ -98,10 +99,36 @@ for csv_file in "$TEMPDIR"/*.csv; do
     sheetname=${sheetname%.csv}   # drop the ".csv" suffix
 
     # Find text with its coordinate
-    FIND_TEXT="$FIND_TEXT" awk -F',' -v sheet="$sheetname" '
-    function col(n,  s,m){ while(n>0){ m=(n-1)%26; s=sprintf("%c",65+m) s; n=int((n-1)/26) } return s }
-    BEGIN { t = tolower(ENVIRON["FIND_TEXT"]) }
-    { for(i=1;i<=NF;i++) if (index(tolower($i), t)) print sheet "!" col(i) NR ": " $i }' "$csv_file"
+    LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" gawk -F'\t' -v sheet="$sheetname" '
+    function unquote(val) {
+        if (val ~ /^".*"$/) {
+            val = substr(val, 2, length(val) - 2)
+            gsub(/""/, "\"", val)
+        }
+        return val
+    }
+    function col(n,  s, m) {
+        while (n > 0) {
+            m = (n - 1) % 26
+            s = sprintf("%c", 65 + m) s
+            n = int((n - 1) / 26)
+        }
+        return s
+    }
+    BEGIN {
+        t = tolower(ENVIRON["FIND_TEXT"])
+    }
+    {
+        sub(/\r$/, "", $0)
+        if (t != "") {
+            for (i = 1; i <= NF; i++) {
+                if (index(tolower($i), t) > 0) {
+                    print sheet "!" col(i) NR ": " unquote($i)
+                }
+            }
+        }
+    }
+    ' "$csv_file"
 done
 echo "--- End Results ---"
 
