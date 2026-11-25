@@ -123,7 +123,7 @@ for csv_file in "$TEMPDIR"/*.csv; do
         if (t != "") {
             for (i = 1; i <= NF; i++) {
                 if (index(unquote(tolower($i)), t) > 0) {
-                    print sheet "!" col(i) NR ": " $i
+                    print sheet "!" col(i) NR ": " unquote($i)
                 }
             }
         }
