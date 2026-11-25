@@ -67,9 +67,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$FIND_TEXT" ]]; then
-    echo "Error: -f is required" >&2
-    usage
+if [[ -z "${FIND_TEXT//[[:space:]]/}" ]]; then
+    echo "Error: -f is required and cannot be empty or whitespace only." >&2
+    exit 1
 fi
 
 if [[ ${#positional_args[@]} -ne 1 ]]; then
@@ -93,7 +93,7 @@ TEMPDIR=$(mktemp -d)
 
 # Convert spreadsheet to temp csv
 soffice -env:UserInstallation="file://$TEMPDIR/profile" --headless \
-    --convert-to 'csv:Text - txt - csv (StarCalc):9,34,76,1,,0,false,true,false,false,false,-1' \
+    --convert-to 'csv:Text - txt - csv (StarCalc):9,34,76,1,,0,false,false,false,false,false,-1' \
     --outdir "$TEMPDIR" "$SS_PATH" >/dev/null
 
 # Check if at least one matching .csv file exists
@@ -102,7 +102,7 @@ if ! compgen -G "$TEMPDIR/*.csv" >/dev/null; then
     exit 1
 fi
 
-# Loop all .csv if multiple sheets
+# Search all sheets in one pass
 base="${SS_FILENAME%.*}"
 echo "----- Results -----"
 
@@ -147,16 +147,16 @@ BEGIN {
         for (i = 1; i <= NF; i++) {
             cell = unquote($i)
             gsub(/^[ \t]+|[ \t]+$/, "", cell)
-            lower_cell = case_sens ? cell : tolower(cell)
+            key = case_sens ? cell : tolower(cell)
             coord = sheet "!" col(i) FNR
 
-            hit = exact_match ? (lower_cell == t) : (index(lower_cell, t) > 0)
+            hit = exact_match ? (key == t) : (index(key, t) > 0)
             if (hit) {
-                if (lower_cell in seen) {
-                    print coord ": [DUPLICATE of " seen[lower_cell] "] " cell
+                if (key in seen) {
+                    print coord ": [DUPLICATE of " seen[key] "] " cell
                     dup_count++
                 } else {
-                    seen[lower_cell] = coord
+                    seen[key] = coord
                     if (!check_dupes) {
                         print coord ": " cell
                     }
