@@ -11,6 +11,7 @@ SCRIPT_NAME=$(basename "$0" .sh)
 FIND_TEXT=""
 TEMPDIR=""
 CHECK_DUPES=0
+EXACT=0
 
 cleanup() {
     [[ -n "${TEMPDIR:-}" && -d "$TEMPDIR" ]] && rm -rf -- "$TEMPDIR"
@@ -22,7 +23,7 @@ trap 'exit 143' TERM
 
 # Helper
 usage() {
-    echo "Usage: ${SCRIPT_NAME} -f <text> [-d] <path-to-file>" >&2
+    echo "Usage: ${SCRIPT_NAME} -f <text> [-d] [-x] <path-to-file>" >&2
     exit 1
 }
 
@@ -39,6 +40,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -d)
             CHECK_DUPES=1
+            shift
+            ;;
+        -x)
+            EXACT=1
             shift
             ;;
         --)
@@ -97,7 +102,10 @@ base="${SS_FILENAME%.*}"
 echo "----- Results -----"
 
 # Find text with its coordinate
-LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' -v base="$base" -v dupes="$CHECK_DUPES" '
+LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' \
+    -v base="$base" \
+    -v dupes="$CHECK_DUPES" \
+    -v exact="$EXACT" '
 function unquote(val) {
     if (length(val) >= 2 && substr(val, 1, 1) == "\"" && substr(val, length(val), 1) == "\"") {
         val = substr(val, 2, length(val) - 2)
@@ -122,6 +130,7 @@ FNR == 1 {
 BEGIN {
     t = tolower(ENVIRON["FIND_TEXT"])
     check_dupes = (dupes + 0 != 0)
+    exact_match = (exact + 0 != 0)
 }
 {
     sub(/\r$/, "", $0)
@@ -131,7 +140,8 @@ BEGIN {
             lower_cell = tolower(cell)
             coord = sheet "!" col(i) FNR
 
-            if (index(lower_cell, t) > 0) {
+            hit = exact_match ? (lower_cell == t) : (index(lower_cell, t) > 0)
+            if (hit) {
                 if (lower_cell in seen) {
                     print coord ": [DUPLICATE of " seen[lower_cell] "] " cell
                     dup_count++
