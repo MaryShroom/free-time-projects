@@ -95,68 +95,59 @@ fi
 # Loop all .csv if multiple sheets
 base="${SS_FILENAME%.*}"
 echo "----- Results -----"
-for csv_file in "$TEMPDIR"/*.csv; do
-    [[ -f "$csv_file" ]] || continue
 
-    # Get sheet name from filename
-    sheetname=${csv_file##*/}          # drop the directory
-    sheetname=${sheetname#"$base"-}     # drop the filename prefix
-    sheetname=${sheetname%.csv}   # drop the ".csv" suffix
+# Find text with its coordinate
+LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' -v base="$base" -v dupes="$CHECK_DUPES" '
+function unquote(val) {
+    if (length(val) >= 2 && substr(val, 1, 1) == "\"" && substr(val, length(val), 1) == "\"") {
+        val = substr(val, 2, length(val) - 2)
+        gsub(/""/, "\"", val)
+    }
+    return val
+}
+function col(n,  s, m) {
+    while (n > 0) {
+        m = (n - 1) % 26
+        s = sprintf("%c", 65 + m) s
+        n = int((n - 1) / 26)
+    }
+    return s
+}
+FNR == 1 {
+    sheet = FILENAME
+    sub(/^.*\//, "", sheet)                      # drop directory
+    sheet = substr(sheet, length(base) + 2)      # drop "<base>-"
+    sheet = substr(sheet, 1, length(sheet) - 4)  # drop ".csv"
+}
+BEGIN {
+    t = tolower(ENVIRON["FIND_TEXT"])
+    check_dupes = (dupes + 0 != 0)
+}
+{
+    sub(/\r$/, "", $0)
+    if (t != "") {
+        for (i = 1; i <= NF; i++) {
+            cell = unquote($i)
+            lower_cell = tolower(cell)
+            coord = sheet "!" col(i) FNR
 
-    # Find text with its coordinate
-    LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' -v base="$base" -v dupes="$CHECK_DUPES" '
-    function unquote(val) {
-        if (length(val) >= 2 && substr(val, 1, 1) == "\"" && substr(val, length(val), 1) == "\"") {
-            val = substr(val, 2, length(val) - 2)
-            gsub(/""/, "\"", val)
-        }
-        return val
-    }
-    function col(n,  s, m) {
-        while (n > 0) {
-            m = (n - 1) % 26
-            s = sprintf("%c", 65 + m) s
-            n = int((n - 1) / 26)
-        }
-        return s
-    }
-    FNR == 1 {
-        sheet = FILENAME
-        sub(/^.*\//, "", sheet)                      # drop directory
-        sheet = substr(sheet, length(base) + 2)      # drop "<base>-"
-        sheet = substr(sheet, 1, length(sheet) - 4)  # drop ".csv"
-    }
-    BEGIN {
-        t = tolower(ENVIRON["FIND_TEXT"])
-        check_dupes = (dupes + 0 != 0)
-    }
-    {
-        sub(/\r$/, "", $0)
-        if (t != "") {
-            for (i = 1; i <= NF; i++) {
-                cell = unquote($i)
-                lower_cell = tolower(cell)
-                coord = sheet "!" col(i) FNR
-
-                if (index(lower_cell, t) > 0) {
-                    if (check_dupes) {
-                        if (lower_cell in seen) {
-                             print coord ": [DUPLICATE of " seen[lower_cell] "] " cell
-                             dup_count++
-                        } else {
-                            seen[lower_cell] = coord
-                            print coord ": " cell
-                        }
-                    } else {
+            if (index(lower_cell, t) > 0) {
+                if (lower_cell in seen) {
+                    print coord ": [DUPLICATE of " seen[lower_cell] "] " cell
+                    dup_count++
+                } else {
+                    seen[lower_cell] = coord
+                    if (!check_dupes) {
                         print coord ": " cell
                     }
                 }
             }
         }
     }
-    END { print dup_count " duplicate(s) found" }
-    ' "$csv_file"
-done
+}
+END { print (dup_count + 0) " duplicate(s) found" }
+' "$csv_file"
+
 echo "--- End Results ---"
 
 echo "Done."
