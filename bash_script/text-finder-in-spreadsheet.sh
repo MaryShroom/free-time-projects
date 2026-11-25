@@ -81,12 +81,11 @@ soffice --headless \
     --outdir "$TEMPDIR" "$SS_PATH" >/dev/null
 
 # Check if at least one matching .csv file exists
-if ! compgen -G "$csv_dir/*.csv" >/dev/null; then
-    echo "Error: soffice produced no .csv files in '$csv_dir'." >&2
+if ! compgen -G "$TEMPDIR/*.csv" >/dev/null; then
+    echo "Error: soffice produced no .csv files in '$TEMPDIR'." >&2
     exit 1
 fi
 
-shopt -s nullglob
 # Loop all .csv if multiple sheets
 base="${SS_FILENAME%.*}"
 echo "----- Results -----"
@@ -95,7 +94,7 @@ for csv_file in "$TEMPDIR"/*.csv; do
 
     # Get sheet name from filename
     sheetname=${csv_file##*/}          # drop the directory
-    sheetname=${sheetname#"$base"-}     # drop the "s-" prefix
+    sheetname=${sheetname#"$base"-}     # drop the filename prefix
     sheetname=${sheetname%.csv}   # drop the ".csv" suffix
 
     # Find text with its coordinate
@@ -105,5 +104,5 @@ for csv_file in "$TEMPDIR"/*.csv; do
     { for(i=1;i<=NF;i++) if (index(tolower($i), t)) print sheet "!" col(i) NR ": " $i }' "$csv_file"
 done
 echo "--- End Results ---"
-shopt -u nullglob
+
 echo "Done."
