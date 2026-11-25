@@ -85,8 +85,12 @@ SS_PATH="${positional_args[0]}"
 
 SS_FILENAME="$(basename -- "$SS_PATH")"
 
-echo "Spreadsheet   : $SS_FILENAME"
-echo "Text to find  : $FIND_TEXT"
+labels=("OFF" "ON")
+echo "Spreadsheet         : '$SS_FILENAME'"
+echo "Text to find        : '$FIND_TEXT'"
+echo "Show Duplicate Only : ${labels[CHECK_DUPES]}"
+echo "Exact Matching      : ${labels[EXACT]}"
+echo "Case-Sensitive      : ${labels[CASE_SENSITIVE]}"
 
 # Temp directory and cleanup when exit
 TEMPDIR=$(mktemp -d)
@@ -107,8 +111,7 @@ base="${SS_FILENAME%.*}"
 echo "----- Results -----"
 
 # Find text with its coordinate
-LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' \
-    -v base="$base" \
+LC_ALL=C.UTF-8 BASE="$base" FIND_TEXT="$FIND_TEXT" awk -F'\t' \
     -v dupes="$CHECK_DUPES" \
     -v exact="$EXACT" \
     -v casesens="$CASE_SENSITIVE" '
@@ -137,6 +140,7 @@ BEGIN {
     case_sens = (casesens + 0 != 0)
     check_dupes = (dupes + 0 != 0)
     exact_match = (exact + 0 != 0)
+    base = ENVIRON["BASE"]
     t = ENVIRON["FIND_TEXT"]
     gsub(/^[ \t]+|[ \t]+$/, "", t)
     if (!case_sens) t = tolower(t)
