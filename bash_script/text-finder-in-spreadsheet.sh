@@ -12,6 +12,7 @@ FIND_TEXT=""
 TEMPDIR=""
 CHECK_DUPES=0
 EXACT=0
+CASE_SENSITIVE=0
 
 cleanup() {
     [[ -n "${TEMPDIR:-}" && -d "$TEMPDIR" ]] && rm -rf -- "$TEMPDIR"
@@ -23,7 +24,7 @@ trap 'exit 143' TERM
 
 # Helper
 usage() {
-    echo "Usage: ${SCRIPT_NAME} -f <text> [-d] [-x] <path-to-file>" >&2
+    echo "Usage: ${SCRIPT_NAME} -f <text> [-d] [-x] [-c] <path-to-file>" >&2
     exit 1
 }
 
@@ -44,6 +45,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -x)
             EXACT=1
+            shift
+            ;;
+        -c)
+            CASE_SENSITIVE=1
             shift
             ;;
         --)
@@ -105,7 +110,8 @@ echo "----- Results -----"
 LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' \
     -v base="$base" \
     -v dupes="$CHECK_DUPES" \
-    -v exact="$EXACT" '
+    -v exact="$EXACT" \
+    -v casesens="$CASE_SENSITIVE" '
 function unquote(val) {
     if (length(val) >= 2 && substr(val, 1, 1) == "\"" && substr(val, length(val), 1) == "\"") {
         val = substr(val, 2, length(val) - 2)
@@ -128,16 +134,20 @@ FNR == 1 {
     sheet = substr(sheet, 1, length(sheet) - 4)  # drop ".csv"
 }
 BEGIN {
-    t = tolower(ENVIRON["FIND_TEXT"])
+    case_sens = (casesens + 0 != 0)
     check_dupes = (dupes + 0 != 0)
     exact_match = (exact + 0 != 0)
+    t = ENVIRON["FIND_TEXT"]
+    gsub(/^[ \t]+|[ \t]+$/, "", t)
+    if (!case_sens) t = tolower(t)
 }
 {
     sub(/\r$/, "", $0)
     if (t != "") {
         for (i = 1; i <= NF; i++) {
             cell = unquote($i)
-            lower_cell = tolower(cell)
+            gsub(/^[ \t]+|[ \t]+$/, "", cell)
+            lower_cell = case_sens ? cell : tolower(cell)
             coord = sheet "!" col(i) FNR
 
             hit = exact_match ? (lower_cell == t) : (index(lower_cell, t) > 0)
@@ -156,7 +166,7 @@ BEGIN {
     }
 }
 END { print (dup_count + 0) " duplicate(s) found" }
-' "$csv_file"
+' "$TEMPDIR"/*.csv
 
 echo "--- End Results ---"
 
