@@ -99,9 +99,9 @@ for csv_file in "$TEMPDIR"/*.csv; do
     sheetname=${sheetname%.csv}   # drop the ".csv" suffix
 
     # Find text with its coordinate
-    LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" gawk -F'\t' -v sheet="$sheetname" '
+    LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' -v sheet="$sheetname" '
     function unquote(val) {
-        if (val ~ /^".*"$/) {
+        if (length(val) >= 2 && substr(val, 1, 1) == "\"" && substr(val, length(val), 1) == "\"") {
             val = substr(val, 2, length(val) - 2)
             gsub(/""/, "\"", val)
         }
@@ -122,8 +122,8 @@ for csv_file in "$TEMPDIR"/*.csv; do
         sub(/\r$/, "", $0)
         if (t != "") {
             for (i = 1; i <= NF; i++) {
-                if (index(tolower($i), t) > 0) {
-                    print sheet "!" col(i) NR ": " unquote($i)
+                if (index(unquote(tolower($i)), t) > 0) {
+                    print sheet "!" col(i) NR ": " $i
                 }
             }
         }
