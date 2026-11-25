@@ -10,6 +10,7 @@ fi
 SCRIPT_NAME=$(basename "$0" .sh)
 FIND_TEXT=""
 TEMPDIR=""
+CHECK_DUPES=0
 
 cleanup() {
     [[ -n "${TEMPDIR:-}" && -d "$TEMPDIR" ]] && rm -rf -- "$TEMPDIR"
@@ -21,7 +22,7 @@ trap 'exit 143' TERM
 
 # Helper
 usage() {
-    echo "Usage: ${SCRIPT_NAME} -f <text> <path-to-file>" >&2
+    echo "Usage: ${SCRIPT_NAME} -f <text> [-d] <path-to-file>" >&2
     exit 1
 }
 
@@ -35,6 +36,10 @@ while [[ $# -gt 0 ]]; do
             fi
             FIND_TEXT="$2"
             shift 2
+            ;;
+        -d)
+            CHECK_DUPES=1
+            shift
             ;;
         --)
             shift
@@ -99,7 +104,7 @@ for csv_file in "$TEMPDIR"/*.csv; do
     sheetname=${sheetname%.csv}   # drop the ".csv" suffix
 
     # Find text with its coordinate
-    LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' -v sheet="$sheetname" '
+    LC_ALL=C.UTF-8 FIND_TEXT="$FIND_TEXT" awk -F'\t' -v sheet="$sheetname" -v dupes="$CHECK_DUPES" '
     function unquote(val) {
         if (length(val) >= 2 && substr(val, 1, 1) == "\"" && substr(val, length(val), 1) == "\"") {
             val = substr(val, 2, length(val) - 2)
@@ -117,13 +122,27 @@ for csv_file in "$TEMPDIR"/*.csv; do
     }
     BEGIN {
         t = tolower(ENVIRON["FIND_TEXT"])
+        check_dupes = (dupes + 0 != 0)
     }
     {
         sub(/\r$/, "", $0)
         if (t != "") {
             for (i = 1; i <= NF; i++) {
-                if (index(unquote(tolower($i)), t) > 0) {
-                    print sheet "!" col(i) NR ": " unquote($i)
+                cell = unquote($i)
+                lower_cell = tolower(cell)
+                coord = col(i) NR
+
+                if (index(lower_cell, t) > 0) {
+                    if (check_dupes) {
+                        if (lower_cell in seen) {
+                            print sheet "!" coord ": [DUPPLICATE of " seen[lower_cell] "] " cell
+                        } else {
+                            seen[lower_cell] = coord
+                            print sheet "!" coord ": " cell
+                        }
+                    } else {
+                        print sheet "!" coord ": " cell
+                    }
                 }
             }
         }
